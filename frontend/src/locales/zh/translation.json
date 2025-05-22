@@ -125,6 +125,7 @@
       "api": {
         "title": "API设置",
         "maxRetries": "最大重试次数",
+        "retryInterval": "重试间隔 (秒)",
         "preserveChats": "保留聊天",
         "webSearch": "网页搜索"
       },

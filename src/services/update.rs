@@ -11,7 +11,11 @@ use std::{
 use tracing::info;
 use zip::ZipArchive;
 
-use crate::{config::CLEWDR_CONFIG, error::{ClewdrError, RquestSnafu}, Args};
+use crate::{
+    Args,
+    config::CLEWDR_CONFIG,
+    error::{ClewdrError, RquestSnafu},
+};
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {

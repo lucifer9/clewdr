@@ -125,6 +125,7 @@
       "api": {
         "title": "API Settings",
         "maxRetries": "Max Retries",
+        "retryInterval": "Retry Interval (seconds)",
         "preserveChats": "Preserve Chats",
         "webSearch": "Web Search"
       },

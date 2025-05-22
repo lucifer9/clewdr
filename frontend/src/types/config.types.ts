@@ -18,6 +18,7 @@ export interface ConfigData {
 
   // API settings
   max_retries: number;
+  retry_interval: number;
   preserve_chats: boolean;
   web_search: boolean;
 

@@ -23,7 +23,8 @@ use yup_oauth2::ServiceAccountKey;
 use crate::{
     config::{
         CookieStatus, UselessCookie, default_check_update, default_ip, default_max_retries,
-        default_padtxt_len, default_port, default_skip_cool_down, default_use_real_roles,
+        default_padtxt_len, default_port, default_retry_interval, default_skip_cool_down,
+        default_use_real_roles,
     },
     error::ClewdrError,
     utils::enabled,
@@ -102,6 +103,8 @@ pub struct ClewdrConfig {
     // Api settings, can hot reload
     #[serde(default = "default_max_retries")]
     pub max_retries: usize,
+    #[serde(default = "default_retry_interval")]
+    pub retry_interval: u64,
     #[serde(default)]
     pub preserve_chats: bool,
     #[serde(default)]
@@ -155,6 +158,7 @@ impl Default for ClewdrConfig {
         Self {
             vertex: Default::default(),
             max_retries: default_max_retries(),
+            retry_interval: default_retry_interval(),
             check_update: default_check_update(),
             auto_update: false,
             cookie_array: HashSet::new(),

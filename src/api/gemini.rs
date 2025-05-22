@@ -62,7 +62,7 @@ fn keep_alive_stream<T>(
 where
     T: Serialize + GetHashKey + Clone + Send + 'static,
 {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     let time_out = std::time::Duration::from_secs(360);
     stream! {
         let stream = async move {

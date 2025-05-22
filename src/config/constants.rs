@@ -69,6 +69,14 @@ pub const fn default_max_retries() -> usize {
     5
 }
 
+/// Default retry interval in seconds between retry attempts
+///
+/// # Returns
+/// * `u64` - The default value of 0 (immediate retry)
+pub const fn default_retry_interval() -> u64 {
+    0
+}
+
 /// Default IP address for the server to bind to
 ///
 /// # Returns

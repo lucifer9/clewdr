@@ -143,6 +143,14 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
             onChange={onChange}
             label={t("config.sections.api.maxRetries")}
           />
+          <FormInput
+            id="retry_interval"
+            name="retry_interval"
+            type="number"
+            value={config.retry_interval.toString()}
+            onChange={onChange}
+            label={t("config.sections.api.retryInterval")}
+          />
         </div>
         <div className="flex space-x-6">
           <ConfigCheckbox

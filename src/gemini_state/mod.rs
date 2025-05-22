@@ -256,6 +256,12 @@ impl GeminiState {
         for i in 0..CLEWDR_CONFIG.load().max_retries + 1 {
             if i > 0 {
                 info!("[RETRY] attempt: {}", i.to_string().green());
+                // Add delay between retries if retry_interval is set
+                let retry_interval = CLEWDR_CONFIG.load().retry_interval;
+                if retry_interval > 0 {
+                    info!("[RETRY] waiting for {} seconds", retry_interval);
+                    tokio::time::sleep(std::time::Duration::from_secs(retry_interval)).await;
+                }
             }
             let mut state = self.to_owned();
             let p = p.to_owned();
