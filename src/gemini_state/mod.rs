@@ -19,10 +19,10 @@ use crate::{
     middleware::gemini::*,
     services::key_actor::KeyActorHandle,
     types::gemini::response::{FinishReason, GeminiResponse},
-    utils::forward_response,
+    utils::{check_tags_closed, forward_response},
 };
 
-#[derive(Clone, Display, PartialEq, Eq)]
+#[derive(Clone, Display, PartialEq, Eq, Debug)]
 pub enum GeminiApiFormat {
     Gemini,
     OpenAI,
@@ -94,17 +94,62 @@ impl GeminiState {
     }
 
     pub async fn report_403(&self) -> Result<(), ClewdrError> {
+        if let Some(key) = self.key.to_owned() {
+            info!(
+                "[KEY_MGMT] Removing 403-failed key from pool: {}",
+                key.key.ellipse().green()
+            );
+            self.key_handle.delete_key(key).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn report_400(&self) -> Result<(), ClewdrError> {
+        if let Some(key) = self.key.to_owned() {
+            info!(
+                "[KEY_MGMT] Removing 400-failed key from pool: {}",
+                key.key.ellipse().green()
+            );
+            self.key_handle.delete_key(key).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn report_429(&self) -> Result<(), ClewdrError> {
         if let Some(mut key) = self.key.to_owned() {
-            key.count_403 += 1;
+            key.set_429_cooldown();
+            self.key_handle.return_key(key).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn report_success(&self) -> Result<(), ClewdrError> {
+        if let Some(key) = self.key.to_owned() {
+            // 成功请求时直接返回key，无需修改状态
             self.key_handle.return_key(key).await?;
         }
         Ok(())
     }
 
     pub async fn request_key(&mut self) -> Result<(), ClewdrError> {
-        let key = self.key_handle.request().await?;
+        info!("[REQUEST_KEY] Requesting key from key pool...");
+        let key = match self.key_handle.request().await {
+            Ok(key) => {
+                info!(
+                    "[REQUEST_KEY] Key obtained successfully: {}",
+                    key.key.ellipse().green()
+                );
+                key
+            }
+            Err(e) => {
+                error!("[REQUEST_KEY] Failed to obtain key from pool: {}", e);
+                return Err(e);
+            }
+        };
         self.key = Some(key.to_owned());
-        let client = ClientBuilder::new();
+        let client = ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(300)) // 5 minutes
+            .connect_timeout(std::time::Duration::from_secs(30)); // 30 seconds
         let client = if let Some(proxy) = CLEWDR_CONFIG.load().proxy.to_owned() {
             client.proxy(proxy)
         } else {
@@ -129,7 +174,9 @@ impl GeminiState {
         &mut self,
         p: impl Sized + Serialize,
     ) -> Result<wreq::Response, ClewdrError> {
-        let client = ClientBuilder::new();
+        let client = ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(300)) // 5 minutes
+            .connect_timeout(std::time::Duration::from_secs(30)); // 30 seconds
         let client = if let Some(proxy) = CLEWDR_CONFIG.load().proxy.to_owned() {
             client.proxy(proxy)
         } else {
@@ -200,20 +247,23 @@ impl GeminiState {
             let res = self.vertex_response(p).await?;
             return Ok(res);
         }
+
         self.request_key().await?;
         let Some(key) = self.key.to_owned() else {
             return Err(ClewdrError::UnexpectedNone {
                 msg: "Key is None, did you request a key?",
             });
         };
-        info!("[KEY] {}", key.key.ellipse().green());
+
         let key = key.key.to_string();
         let res = match self.api_format {
             GeminiApiFormat::Gemini => {
                 let mut query_vec = self.query.to_vec();
                 query_vec.push(("key", key.as_str()));
+                let endpoint = format!("{}/v1beta/{}", GEMINI_ENDPOINT, self.path);
+
                 self.client
-                    .post(format!("{}/v1beta/{}", GEMINI_ENDPOINT, self.path))
+                    .post(endpoint)
                     .query(&query_vec)
                     .json(&p)
                     .send()
@@ -222,16 +272,18 @@ impl GeminiState {
                         msg: "Failed to send request to Gemini API",
                     })?
             }
-            GeminiApiFormat::OpenAI => self
-                .client
-                .post(format!("{GEMINI_ENDPOINT}/v1beta/openai/chat/completions",))
-                .header(AUTHORIZATION, format!("Bearer {key}"))
-                .json(&p)
-                .send()
-                .await
-                .context(WreqSnafu {
-                    msg: "Failed to send request to Gemini OpenAI API",
-                })?,
+            GeminiApiFormat::OpenAI => {
+                let endpoint = format!("{GEMINI_ENDPOINT}/v1beta/openai/chat/completions");
+                self.client
+                    .post(endpoint)
+                    .header(AUTHORIZATION, format!("Bearer {key}"))
+                    .json(&p)
+                    .send()
+                    .await
+                    .context(WreqSnafu {
+                        msg: "Failed to send request to Gemini OpenAI API",
+                    })?
+            }
         };
         let res = res.check_gemini().await?;
         Ok(res)
@@ -239,7 +291,13 @@ impl GeminiState {
 
     pub async fn try_chat(&mut self, p: impl Serialize + Clone) -> Result<Response, ClewdrError> {
         let mut err = None;
-        for i in 0..CLEWDR_CONFIG.load().max_retries + 1 {
+        let max_retries = CLEWDR_CONFIG.load().max_retries;
+        info!(
+            "[TRY_CHAT] Starting - max_retries configured: {}",
+            max_retries
+        );
+
+        for i in 0..max_retries + 1 {
             if i > 0 {
                 info!("[RETRY] attempt: {}", i.to_string().green());
             }
@@ -248,7 +306,15 @@ impl GeminiState {
 
             match state.send_chat(p).await {
                 Ok(resp) => match state.check_empty_choices(resp).await {
-                    Ok(resp) => return Ok(resp),
+                    Ok(resp) => {
+                        // 成功处理请求，更新密钥状态
+                        spawn(async move {
+                            state.report_success().await.unwrap_or_else(|e| {
+                                error!("Failed to report success: {}", e);
+                            });
+                        });
+                        return Ok(resp);
+                    }
                     Err(e) => {
                         error!("Failed to check empty choices: {}", e);
                         err = Some(e);
@@ -263,53 +329,169 @@ impl GeminiState {
                     }
                     match e {
                         ClewdrError::GeminiHttpError { code, .. } => {
-                            if code == 403 {
-                                spawn(async move {
-                                    state.report_403().await.unwrap_or_else(|e| {
-                                        error!("Failed to report 403: {}", e);
+                            match code.as_u16() {
+                                400 => {
+                                    spawn(async move {
+                                        state.report_400().await.unwrap_or_else(|e| {
+                                            error!("Failed to report 400: {}", e);
+                                        });
                                     });
-                                });
+                                }
+                                403 => {
+                                    spawn(async move {
+                                        state.report_403().await.unwrap_or_else(|e| {
+                                            error!("Failed to report 403: {}", e);
+                                        });
+                                    });
+                                }
+                                429 => {
+                                    spawn(async move {
+                                        state.report_429().await.unwrap_or_else(|e| {
+                                            error!("Failed to report 429: {}", e);
+                                        });
+                                    });
+                                }
+                                _ => {}
                             }
                             err = Some(e);
                             continue;
                         }
-                        e => return Err(e),
+                        e => {
+                            error!("[TRY_CHAT] Non-retryable error encountered: {}", e);
+                            return Err(e);
+                        }
                     }
                 }
             }
         }
-        error!("Max retries exceeded");
+        error!(
+            "[TRY_CHAT] Max retries exceeded - configured: {}, attempted: {}",
+            max_retries,
+            max_retries + 1
+        );
         if let Some(e) = err {
+            error!("[TRY_CHAT] Returning last error: {}", e);
             return Err(e);
         }
+        error!("[TRY_CHAT] No specific error, returning TooManyRetries");
         Err(ClewdrError::TooManyRetries)
     }
 
     async fn check_empty_choices(&self, resp: wreq::Response) -> Result<Response, ClewdrError> {
+        info!(
+            "[CHECK_EMPTY] Starting check - stream={}, api_format={:?}",
+            self.stream, self.api_format
+        );
+
         if self.stream {
+            info!("[CHECK_EMPTY] Streaming response - forwarding directly");
             return forward_response(resp);
         }
+
         let bytes = resp.bytes().await.context(WreqSnafu {
             msg: "Failed to get bytes from Gemini response",
         })?;
 
+        info!("[CHECK_EMPTY] Response body length: {} bytes", bytes.len());
+
         match self.api_format {
             GeminiApiFormat::Gemini => {
-                let res = serde_json::from_slice::<GeminiResponse>(&bytes)?;
+                info!("[CHECK_EMPTY] Attempting to parse as Gemini format");
+                let res = match serde_json::from_slice::<GeminiResponse>(&bytes) {
+                    Ok(res) => {
+                        info!(
+                            "[CHECK_EMPTY] Gemini JSON parsed successfully - candidates count: {}",
+                            res.candidates.len()
+                        );
+                        res
+                    }
+                    Err(e) => {
+                        error!("[CHECK_EMPTY] Gemini JSON parse failed - error: {}", e);
+                        error!(
+                            "[CHECK_EMPTY] Failed bytes (first 500): {}",
+                            String::from_utf8_lossy(&bytes[..500.min(bytes.len())])
+                        );
+                        return Err(ClewdrError::from(e));
+                    }
+                };
+                // Check for candidates that should trigger retry
                 if res.candidates.is_empty() {
                     return Err(ClewdrError::EmptyChoices);
                 }
-                if res.candidates[0].finishReason == Some(FinishReason::OTHER) {
-                    return Err(ClewdrError::EmptyChoices);
+
+                // Unified retry logic: retry if no content unless it's a STOP finish reason
+                if let Some(candidate) = res.candidates.first() {
+                    if candidate.content.is_none()
+                        && candidate.finishReason != Some(FinishReason::STOP)
+                    {
+                        info!(
+                            "[CHECK_EMPTY] No content with finishReason {:?} - will retry",
+                            candidate.finishReason
+                        );
+                        return Err(ClewdrError::EmptyChoices);
+                    }
+
+                    // Check tag completeness for non-streaming responses
+                    let config = CLEWDR_CONFIG.load();
+                    if !config.check_tags.trim().is_empty() {
+                        // Use JSON parsing to extract text content safely
+                        if let Ok(json_value) = serde_json::to_value(&res) {
+                            if let Some(candidates) = json_value["candidates"].as_array() {
+                                if let Some(first_candidate) = candidates.first() {
+                                    if let Some(content) = first_candidate["content"].as_object() {
+                                        if let Some(parts) = content["parts"].as_array() {
+                                            for part in parts {
+                                                if let Some(text) = part["text"].as_str() {
+                                                    if !check_tags_closed(text, &config.check_tags)
+                                                    {
+                                                        info!(
+                                                            "[TAG_CHECK] Content has unclosed tags - will retry"
+                                                        );
+                                                        return Err(ClewdrError::EmptyChoices);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             GeminiApiFormat::OpenAI => {
-                let res = serde_json::from_slice::<Value>(&bytes)?;
+                info!("[CHECK_EMPTY] Attempting to parse as OpenAI format");
+                let res = match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(res) => {
+                        info!("[CHECK_EMPTY] OpenAI JSON parsed successfully");
+                        res
+                    }
+                    Err(e) => {
+                        error!("[CHECK_EMPTY] OpenAI JSON parse failed - error: {}", e);
+                        error!(
+                            "[CHECK_EMPTY] Failed bytes (first 500): {}",
+                            String::from_utf8_lossy(&bytes[..500.min(bytes.len())])
+                        );
+                        return Err(ClewdrError::from(e));
+                    }
+                };
                 if res["choices"].as_array().is_some_and(|v| v.is_empty()) {
                     return Err(ClewdrError::EmptyChoices);
                 }
                 if res["choices"][0]["finish_reason"] == "OTHER" {
                     return Err(ClewdrError::EmptyChoices);
+                }
+
+                // Check tag completeness for non-streaming responses
+                let config = CLEWDR_CONFIG.load();
+                if !config.check_tags.trim().is_empty() {
+                    if let Some(message_content) = res["choices"][0]["message"]["content"].as_str()
+                    {
+                        if !check_tags_closed(message_content, &config.check_tags) {
+                            info!("[TAG_CHECK] Content has unclosed tags - will retry");
+                            return Err(ClewdrError::EmptyChoices);
+                        }
+                    }
                 }
             }
         }

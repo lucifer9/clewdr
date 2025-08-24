@@ -35,9 +35,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState("cookie");
 
+  // Utility function to strip ANSI escape sequences
+  const stripAnsiCodes = (text: string): string => {
+    return text.replace(/\x1b\[[0-9;]*m/g, '');
+  };
+
   useEffect(() => {
     // Fetch and set the version when component mounts
-    getVersion().then((v) => setVersion(v));
+    getVersion().then((v) => setVersion(stripAnsiCodes(v)));
 
     // Check for authentication status
     const checkAuth = async () => {

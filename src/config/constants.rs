@@ -104,5 +104,23 @@ pub const fn default_skip_cool_down() -> bool {
     true
 }
 
+/// Default setting for fake streaming feature
+/// Based on hajimi project - enabled by default
+///
+/// # Returns
+/// * `bool` - The default value of true
+pub const fn default_fake_streaming() -> bool {
+    true
+}
+
+/// Default interval for fake streaming keep-alive messages
+/// Based on hajimi project - 1.0 second interval
+///
+/// # Returns  
+/// * `f64` - The default interval in seconds
+pub const fn default_fake_streaming_interval() -> f64 {
+    1.0
+}
+
 /// Default cookie value for testing purposes
 pub const PLACEHOLDER_COOKIE: &str = "sk-ant-sid01----------------------------SET_YOUR_COOKIE_HERE----------------------------------------AAAAAAAA";

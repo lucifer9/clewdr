@@ -69,8 +69,7 @@ impl From<GeminiKey> for String {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KeyStatus {
     pub key: GeminiKey,
-    #[serde(default)]
-    pub count_403: u32,
+    pub cooldown_until: Option<i64>,
 }
 
 impl PartialEq for KeyStatus {
@@ -88,5 +87,15 @@ impl std::hash::Hash for KeyStatus {
 impl KeyStatus {
     pub fn validate(&self) -> bool {
         self.key.validate()
+    }
+    
+    pub fn is_available(&self) -> bool {
+        self.cooldown_until.is_none_or(|until| {
+            chrono::Utc::now().timestamp() >= until
+        })
+    }
+    
+    pub fn set_429_cooldown(&mut self) {
+        self.cooldown_until = Some(chrono::Utc::now().timestamp() + 3600); // 1小时后
     }
 }

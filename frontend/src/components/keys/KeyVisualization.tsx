@@ -81,6 +81,20 @@ const KeyVisualization: React.FC = () => {
   // Calculate total key count
   const totalKeys = keyStatus.valid.length;
 
+  // Filter keys with cooldown and sort by cooldown time remaining
+  const keysWithErrors = keyStatus.valid.filter(status => 
+    status.cooldown_until && Date.now() / 1000 < status.cooldown_until
+  );
+
+  const sortedKeys = keysWithErrors
+    .slice()
+    .sort((a, b) => {
+      // Sort by remaining cooldown time (shortest first)
+      const aRemaining = a.cooldown_until ? a.cooldown_until - Date.now() / 1000 : 0;
+      const bRemaining = b.cooldown_until ? b.cooldown_until - Date.now() / 1000 : 0;
+      return aRemaining - bRemaining;
+    });
+
   return (
     <div className="space-y-6 w-full">
       {/* Header */}
@@ -91,6 +105,11 @@ const KeyVisualization: React.FC = () => {
           </h3>
           <p className="text-xs text-gray-400 mt-1">
             {t("keyStatus.total", { count: totalKeys })}
+            {keysWithErrors.length > 0 && (
+              <span className="text-yellow-400 ml-2">
+                • {keysWithErrors.length} 个冷却中
+              </span>
+            )}
           </p>
         </div>
         <Button
@@ -154,41 +173,45 @@ const KeyVisualization: React.FC = () => {
         </div>
       )}
 
-      {/* Valid Keys Section */}
-      <div className="rounded-lg border border-purple-800 bg-purple-900/20 p-4">
-        <h4 className="text-purple-300 font-medium mb-3">
-          {t("keyStatus.sections.valid")}
+      {/* Cooling Keys Section */}
+      <div className="rounded-lg border border-yellow-800 bg-yellow-900/20 p-4">
+        <h4 className="text-yellow-300 font-medium mb-3">
+          冷却中的密钥
         </h4>
 
-        {keyStatus.valid.length === 0 ? (
-          <p className="text-sm text-gray-400 py-2">{t("keyStatus.noKeys")}</p>
+        {keysWithErrors.length === 0 ? (
+          <div className="flex items-center text-green-400 text-sm py-4">
+            <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+            🎉 所有 {totalKeys} 个密钥状态正常
+          </div>
         ) : (
           <div className="space-y-2">
-            {keyStatus.valid
-              .slice()
-              .sort((a, b) => (b.count_403 || 0) - (a.count_403 || 0))
-              .map((status, index) => (
-                <div
-                  key={index}
-                  className="py-2 text-sm text-gray-300 flex flex-wrap justify-between items-start border-b border-purple-800/30 last:border-0"
-                >
-                  <div className="text-purple-300 flex-grow mr-4 min-w-0 mb-1 sm:mb-0">
-                    <KeyValue keyString={status.key} />
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    {typeof status.count_403 === "number" && (
-                      <span className="text-orange-400 bg-orange-900/30 px-2 py-0.5 rounded text-xs">
-                        403: {status.count_403}
-                      </span>
-                    )}
-                    <DeleteButton
-                      keyString={status.key}
-                      onDelete={handleDeleteKey}
-                      isDeleting={deletingKey === status.key}
-                    />
-                  </div>
+            {sortedKeys.map((status) => (
+              <div
+                key={status.key}
+                className="py-2 text-sm text-gray-300 flex flex-wrap justify-between items-start border-b border-yellow-800/30 last:border-0"
+              >
+                <div className="text-purple-300 flex-grow mr-4 min-w-0 mb-1 sm:mb-0">
+                  <KeyValue keyString={status.key} />
                 </div>
-              ))}
+                <div className="flex items-center space-x-2">
+                  {/* 429冷却显示 - 显示剩余冷却秒数 */}
+                  {status.cooldown_until && Date.now() / 1000 < status.cooldown_until && (
+                    <span className="text-yellow-400 bg-yellow-900/30 px-2 py-0.5 rounded text-xs">
+                      429: {Math.ceil(status.cooldown_until - Date.now() / 1000)}s
+                    </span>
+                  )}
+                  
+                  <DeleteButton
+                    keyString={status.key}
+                    onDelete={handleDeleteKey}
+                    isDeleting={deletingKey === status.key}
+                  />
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -197,6 +220,29 @@ const KeyVisualization: React.FC = () => {
       {!loading && totalKeys === 0 && (
         <div className="mt-4 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-md">
           <p className="text-sm text-gray-300">{t("keyStatus.emptyHelp")}</p>
+        </div>
+      )}
+
+      {/* Statistics Panel */}
+      {totalKeys > 0 && (
+        <div className="mt-4 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-md">
+          <h5 className="text-sm font-medium text-gray-300 mb-2">密钥健康统计</h5>
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div className="text-center">
+              <div className="text-white text-lg font-bold">{totalKeys}</div>
+              <div className="text-gray-400">总密钥</div>
+            </div>
+            <div className="text-center">
+              <div className="text-green-400 text-lg font-bold">{totalKeys - keysWithErrors.length}</div>
+              <div className="text-gray-400">健康</div>
+            </div>
+            <div className="text-center">
+              <div className="text-yellow-400 text-lg font-bold">
+                {keysWithErrors.length}
+              </div>
+              <div className="text-gray-400">冷却中</div>
+            </div>
+          </div>
         </div>
       )}
     </div>

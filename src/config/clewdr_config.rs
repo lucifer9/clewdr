@@ -24,8 +24,9 @@ use super::{CONFIG_PATH, ENDPOINT_URL, key::KeyStatus};
 use crate::{
     Args,
     config::{
-        CC_CLIENT_ID, CookieStatus, UselessCookie, default_check_update, default_ip,
-        default_max_retries, default_port, default_skip_cool_down, default_use_real_roles,
+        CC_CLIENT_ID, CookieStatus, UselessCookie, default_check_update, default_fake_streaming,
+        default_fake_streaming_interval, default_ip, default_max_retries, default_port,
+        default_skip_cool_down, default_use_real_roles,
     },
     error::ClewdrError,
     utils::enabled,
@@ -112,6 +113,12 @@ pub struct ClewdrConfig {
     #[serde(default)]
     pub web_search: bool,
 
+    // Fake streaming settings, can hot reload
+    #[serde(default = "default_fake_streaming")]
+    pub fake_streaming: bool,
+    #[serde(default = "default_fake_streaming_interval")]
+    pub fake_streaming_interval: f64,
+
     // Cookie settings, can hot reload
     #[serde(default)]
     pub skip_first_warning: bool,
@@ -142,6 +149,10 @@ pub struct ClewdrConfig {
     #[serde(default)]
     pub custom_system: Option<String>,
 
+    // Tag completeness check settings, can hot reload
+    #[serde(default)]
+    pub check_tags: String,
+
     // Skip field, can hot reload
     #[serde(skip)]
     pub wreq_proxy: Option<Proxy>,
@@ -170,6 +181,8 @@ impl Default for ClewdrConfig {
             wreq_proxy: None,
             preserve_chats: false,
             web_search: false,
+            fake_streaming: default_fake_streaming(),
+            fake_streaming_interval: default_fake_streaming_interval(),
             skip_first_warning: false,
             skip_second_warning: false,
             skip_restricted: false,
@@ -178,6 +191,7 @@ impl Default for ClewdrConfig {
             skip_normal_pro: false,
             claude_code_client_id: None,
             custom_system: None,
+            check_tags: String::new(),
             no_fs: false,
             log_to_file: false,
         }

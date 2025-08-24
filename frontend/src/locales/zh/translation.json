@@ -126,7 +126,14 @@
         "title": "API设置",
         "maxRetries": "最大重试次数",
         "preserveChats": "保留聊天",
-        "webSearch": "网页搜索"
+        "webSearch": "网页搜索",
+        "fakeStreaming": {
+          "title": "虚拟流式传输",
+          "enabled": "启用虚拟流式传输",
+          "description": "在长时间非流式请求中发送保活消息以防止超时。有助于处理Google的随机断连问题。",
+          "interval": "保活间隔（秒）",
+          "intervalNote": "发送保活消息的频率。默认：1.0秒（基于hajimi项目）。"
+        }
       },
       "cookie": {
         "title": "Cookie设置",
@@ -143,6 +150,13 @@
         "customH": "自定义 Human（可选）",
         "customA": "自定义 Assistant（可选）",
         "customPrompt": "自定义提示词"
+      },
+      "tagCheck": {
+        "title": "标签完整性检查",
+        "tags": "检查标签",
+        "placeholder": "div,span,p,code",
+        "description": "逗号分隔的需要检查闭合的标签列表。如果响应中的这些标签未正确闭合，将自动重试请求。",
+        "note": "注意：仅在fake streaming和non streaming模式下生效，真正的streaming模式不会检查。"
       }
     }
   },

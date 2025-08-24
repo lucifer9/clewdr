@@ -35,6 +35,9 @@ export interface FormInputProps {
   rows?: number;
   error?: string;
   onClear?: () => void;
+  step?: string;
+  min?: string;
+  max?: string;
 }
 
 export interface CardProps {

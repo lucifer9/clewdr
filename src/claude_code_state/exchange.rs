@@ -20,6 +20,20 @@ use crate::{
     error::{CheckClaudeErr, ClewdrError, UnexpectedNoneSnafu, UrlSnafu, WreqSnafu},
 };
 
+// Type alias to simplify the complex OAuth2 client type
+type ClaudeCodeClient = Client<
+    BasicErrorResponse,
+    BasicTokenResponse,
+    BasicTokenIntrospectionResponse,
+    StandardRevocableToken,
+    BasicRevocationErrorResponse,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointSet,
+>;
+
 struct OauthClient {
     client: wreq::Client,
 }
@@ -64,21 +78,7 @@ pub struct ExchangeResult {
 
 fn setup_client(
     cc_client_id: String,
-) -> Result<
-    Client<
-        BasicErrorResponse,
-        BasicTokenResponse,
-        BasicTokenIntrospectionResponse,
-        StandardRevocableToken,
-        BasicRevocationErrorResponse,
-        EndpointNotSet,
-        EndpointNotSet,
-        EndpointNotSet,
-        EndpointNotSet,
-        EndpointSet,
-    >,
-    ClewdrError,
-> {
+) -> Result<ClaudeCodeClient, ClewdrError> {
     Ok(oauth2::basic::BasicClient::new(ClientId::new(cc_client_id))
         .set_auth_type(oauth2::AuthType::RequestBody)
         .set_redirect_uri(RedirectUrl::new(CC_REDIRECT_URI.into()).map_err(|_| {

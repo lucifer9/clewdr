@@ -144,7 +144,7 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
             label={t("config.sections.api.maxRetries")}
           />
         </div>
-        <div className="flex space-x-6">
+        <div className="flex space-x-6 mb-4">
           <ConfigCheckbox
             name="preserve_chats"
             checked={config.preserve_chats}
@@ -158,6 +158,42 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
             onChange={onChange}
             label={t("config.sections.api.webSearch")}
           />
+        </div>
+
+        {/* Fake Streaming Settings */}
+        <div className="border-t border-gray-600 pt-4">
+          <h4 className="text-sm font-medium text-gray-300 mb-3">
+            {t("config.sections.api.fakeStreaming.title")}
+          </h4>
+          <div className="space-y-3">
+            <ConfigCheckbox
+              name="fake_streaming"
+              checked={config.fake_streaming}
+              onChange={onChange}
+              label={t("config.sections.api.fakeStreaming.enabled")}
+            />
+            <div className="text-xs text-gray-400 mb-3">
+              {t("config.sections.api.fakeStreaming.description")}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormInput
+                id="fake_streaming_interval"
+                name="fake_streaming_interval"
+                type="number"
+                step="0.1"
+                min="0.1"
+                max="10"
+                value={config.fake_streaming_interval.toString()}
+                onChange={onChange}
+                label={t("config.sections.api.fakeStreaming.interval")}
+                disabled={!config.fake_streaming}
+              />
+            </div>
+            <div className="text-xs text-gray-500">
+              {t("config.sections.api.fakeStreaming.intervalNote")}
+            </div>
+          </div>
         </div>
       </ConfigSection>
 
@@ -241,6 +277,25 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
           isTextarea={true}
           rows={3}
         />
+      </ConfigSection>
+
+      {/* Tag Completeness Check Section */}
+      <ConfigSection title={t("config.sections.tagCheck.title")}>
+        <FormInput
+          id="check_tags"
+          name="check_tags"
+          type="text"
+          value={config.check_tags}
+          onChange={onChange}
+          label={t("config.sections.tagCheck.tags")}
+          placeholder={t("config.sections.tagCheck.placeholder")}
+        />
+        <div className="text-xs text-gray-400 mt-2">
+          {t("config.sections.tagCheck.description")}
+        </div>
+        <div className="text-xs text-amber-400 mt-1">
+          {t("config.sections.tagCheck.note")}
+        </div>
       </ConfigSection>
     </div>
   );

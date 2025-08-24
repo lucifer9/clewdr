@@ -21,6 +21,10 @@ export interface ConfigData {
   preserve_chats: boolean;
   web_search: boolean;
 
+  // Fake streaming settings
+  fake_streaming: boolean;
+  fake_streaming_interval: number;
+
   // Cookie settings
   skip_first_warning: boolean;
   skip_second_warning: boolean;
@@ -34,6 +38,9 @@ export interface ConfigData {
   custom_h: string | null;
   custom_a: string | null;
   custom_prompt: string;
+
+  // Tag completeness check settings
+  check_tags: string;
 }
 
 interface VertexConfig {

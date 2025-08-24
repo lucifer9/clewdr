@@ -56,8 +56,15 @@ impl KeyActor {
 
     /// Dispatches a key for use
     fn dispatch(state: &mut KeyActorState) -> Result<KeyStatus, ClewdrError> {
-        let key = state.pop_front().ok_or(ClewdrError::NoKeyAvailable)?;
-        state.push_back(key.to_owned());
+        // 找到第一个可用的密钥（不在冷却中）
+        let available_index = state
+            .iter()
+            .position(|key| key.is_available())
+            .ok_or(ClewdrError::NoKeyAvailable)?;
+        
+        // 移除可用的密钥并放到队列末尾
+        let key = state.remove(available_index).unwrap();
+        state.push_back(key.clone());
         Ok(key)
     }
 

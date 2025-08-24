@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::request::*;
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[allow(non_camel_case_types)]
 pub enum FinishReason {
     /// Default value. This value is unused.
@@ -35,7 +35,7 @@ pub enum FinishReason {
 #[derive(Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct Candidate {
-    content: Chat,
+    pub content: Option<Chat>,
     pub finishReason: Option<FinishReason>,
 }
 

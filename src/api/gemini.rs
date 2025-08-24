@@ -1,23 +1,393 @@
 use async_stream::stream;
-use axum::{
-    body::Body,
-    extract::State,
-    response::{IntoResponse, Response},
-};
+use axum::{body::Body, extract::State, response::Response};
 use bytes::Bytes;
 use colored::Colorize;
-use futures::{FutureExt, Stream, StreamExt, pin_mut};
+use futures::{Stream, StreamExt};
 use http::header::CONTENT_TYPE;
 use serde::Serialize;
-use tokio::select;
+use serde_json::json;
+use std::{
+    pin::Pin,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use tokio::{select, time::interval};
 use tracing::info;
 
 use crate::{
+    config::CLEWDR_CONFIG,
     error::ClewdrError,
     gemini_state::{GeminiApiFormat, GeminiState},
     middleware::gemini::{GeminiContext, GeminiOaiPreprocess, GeminiPreprocess},
     utils::enabled,
 };
+
+// Convert complete response to streaming chunks
+async fn response_to_stream_chunks(
+    response: Response,
+    ctx: &GeminiContext,
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, axum::Error>> + Send>>, ClewdrError> {
+    use axum::body::to_bytes;
+
+    // Get the response body as bytes
+    let body_bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .map_err(|_e| ClewdrError::UnexpectedNone {
+            msg: "Failed to read response body",
+        })?;
+
+    // Parse and convert based on format
+    match ctx.api_format {
+        GeminiApiFormat::OpenAI => {
+            // Parse as OpenAI format and create streaming chunks
+            let response_text = String::from_utf8_lossy(&body_bytes).to_string();
+            let model = ctx.model.clone();
+            Ok(Box::pin(convert_openai_to_stream(response_text, model)))
+        }
+        GeminiApiFormat::Gemini => {
+            // Parse as Gemini format and create streaming chunks
+            let response_text = String::from_utf8_lossy(&body_bytes).to_string();
+            Ok(Box::pin(convert_gemini_to_stream(response_text)))
+        }
+    }
+}
+
+// Convert OpenAI format response to streaming chunks
+fn convert_openai_to_stream(
+    response_text: String,
+    model: String,
+) -> impl Stream<Item = Result<Bytes, axum::Error>> {
+    stream! {
+        if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(&response_text) {
+            if let Some(choices) = response_data["choices"].as_array() {
+                if let Some(first_choice) = choices.first() {
+                    if let Some(content) = first_choice["message"]["content"].as_str() {
+                        let timestamp = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+
+                        // Send complete content as a single chunk to preserve formatting
+                        let chunk_data = json!({
+                            "id": format!("chatcmpl-{}", timestamp),
+                            "object": "chat.completion.chunk",
+                            "created": timestamp,
+                            "model": model,
+                            "choices": [{
+                                "delta": {"content": content},
+                                "index": 0,
+                                "finish_reason": null
+                            }]
+                        });
+
+                        yield Ok(Bytes::from(format!("data: {chunk_data}\n\n")));
+
+                        // Send final chunk with finish_reason
+                        let final_chunk = json!({
+                            "id": format!("chatcmpl-{}", timestamp),
+                            "object": "chat.completion.chunk",
+                            "created": timestamp,
+                            "model": model,
+                            "choices": [{
+                                "delta": {},
+                                "index": 0,
+                                "finish_reason": "stop"
+                            }]
+                        });
+
+                        yield Ok(Bytes::from(format!("data: {final_chunk}\n\n")));
+                        yield Ok(Bytes::from("data: [DONE]\n\n"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Convert Gemini format response to streaming chunks
+fn convert_gemini_to_stream(
+    response_text: String,
+) -> impl Stream<Item = Result<Bytes, axum::Error>> {
+    stream! {
+        if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(&response_text) {
+            if let Some(candidates) = response_data["candidates"].as_array() {
+                if let Some(first_candidate) = candidates.first() {
+                    if let Some(content) = first_candidate["content"]["parts"][0]["text"].as_str() {
+                        // Send complete content as a single chunk to preserve formatting
+                        let chunk_data = json!({
+                            "candidates": [{
+                                "content": {
+                                    "parts": [{"text": content}],
+                                    "role": "model"
+                                },
+                                "finishReason": null,
+                                "index": 0
+                            }]
+                        });
+
+                        yield Ok(Bytes::from(format!("data: {chunk_data}\n\n")));
+
+                        // Send final chunk with finishReason
+                        let final_chunk = json!({
+                            "candidates": [{
+                                "content": {
+                                    "parts": [{"text": ""}],
+                                    "role": "model"
+                                },
+                                "finishReason": "STOP",
+                                "index": 0
+                            }]
+                        });
+
+                        yield Ok(Bytes::from(format!("data: {final_chunk}\n\n")));
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Create keep-alive chunk based on API format for client compatibility
+fn create_keep_alive_chunk(api_format: &GeminiApiFormat) -> String {
+    match api_format {
+        GeminiApiFormat::OpenAI => {
+            // OpenAI format: use minimal but complete JSON chunk for compatibility
+            // Based on real-world OpenAI streaming format requirements
+            let keep_alive_data = json!({
+                "id": "chatcmpl-keepalive",
+                "object": "chat.completion.chunk",
+                "created": SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                "model": "keepalive",
+                "choices": [{
+                    "index": 0,
+                    "delta": {"content": ""},
+                    "finish_reason": null
+                }]
+            });
+            format!("data: {keep_alive_data}\n\n")
+        }
+        GeminiApiFormat::Gemini => {
+            // Gemini format: use larger, legal JSON data to help penetrate carrier NAT
+            // Empty candidates array is legal and won't break client parsing
+            let empty_gemini_data = json!({
+                "candidates": [],
+                "metadata": {
+                    "keepalive": true,
+                    "timestamp": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                }
+            });
+            format!("data: {empty_gemini_data}\n\n")
+        }
+    }
+}
+
+// Create error chunk based on API format
+fn create_error_chunk(error: &ClewdrError, ctx: &GeminiContext) -> String {
+    match ctx.api_format {
+        GeminiApiFormat::OpenAI => {
+            let error_data = json!({
+                "error": {
+                    "message": error.to_string(),
+                    "type": "api_error",
+                    "code": "internal_error"
+                }
+            });
+            format!("data: {error_data}\n\n")
+        }
+        GeminiApiFormat::Gemini => {
+            let error_data = json!({
+                "error": {
+                    "message": error.to_string(),
+                    "code": 500,
+                    "status": "INTERNAL"
+                }
+            });
+            format!("data: {error_data}\n\n")
+        }
+    }
+}
+
+// Fake streaming handler - sends keep-alive messages while processing non-streaming request
+fn fake_streaming_handler<T>(
+    state: GeminiState,
+    body: T,
+    ctx: GeminiContext,
+) -> impl Stream<Item = Result<Bytes, axum::Error>>
+where
+    T: Serialize + Clone + Send + 'static,
+{
+    let config = CLEWDR_CONFIG.load();
+    let keep_alive_interval = Duration::from_secs_f64(config.fake_streaming_interval);
+
+    stream! {
+        info!("[FAKE_STREAMING] Handler started");
+
+        // Set up the non-streaming request in the background
+        let mut non_streaming_state = state.clone();
+        non_streaming_state.stream = false;
+
+        // Fix path: change from streamGenerateContent to generateContent for non-streaming
+        if non_streaming_state.path.contains("streamGenerateContent") {
+            non_streaming_state.path = non_streaming_state.path.replace("streamGenerateContent", "generateContent");
+        }
+
+        // Fix query parameters: remove alt=sse if present to avoid SSE format response
+        if let Some(alt) = &non_streaming_state.query.alt {
+            if alt == "sse" {
+                non_streaming_state.query.alt = None;
+            }
+        }
+
+        // Create channels for communication
+        let (keep_alive_tx, mut keep_alive_rx) = tokio::sync::mpsc::channel::<Bytes>(100);
+
+        // Clone context data for response conversion to avoid partial moves
+        let ctx_for_response = ctx.api_format.clone();
+
+        // Spawn independent keep-alive task that runs completely separately from API calls
+        let keep_alive_handle = {
+            let tx = keep_alive_tx.clone();
+            let api_format = ctx_for_response.clone(); // Use cloned api_format
+
+            tokio::spawn(async move {
+                let mut interval = interval(keep_alive_interval);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                // Send initial keep-alive immediately
+                let initial_msg = Bytes::from(create_keep_alive_chunk(&api_format));
+                if tx.send(initial_msg).await.is_err() {
+                    return; // Receiver dropped
+                }
+
+                loop {
+                    interval.tick().await;
+                    let keep_alive = Bytes::from(create_keep_alive_chunk(&api_format));
+
+                    if tx.send(keep_alive).await.is_err() {
+                        break; // Receiver dropped, task should stop
+                    }
+                }
+            })
+        };
+
+        // Spawn connection monitoring task
+        let connection_start = std::time::Instant::now();
+        let connection_monitor_handle = tokio::spawn(async move {
+            let start = connection_start;
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+
+            loop {
+                interval.tick().await;
+                let elapsed = start.elapsed().as_secs();
+                info!("[CONNECTION_MONITOR] Connection alive for {} seconds", elapsed);
+
+                if elapsed >= 150 {
+                    break;
+                }
+            }
+        });
+
+        // Spawn API call in separate task
+        let mut api_task = tokio::spawn(async move {
+            non_streaming_state.try_chat(body).await
+        });
+
+        // Main event loop - now only handles keep-alive messages and API completion
+        loop {
+            select! {
+                biased; // Ensure fair scheduling
+
+                // API task completion
+                result = &mut api_task => {
+                    // Stop keep-alive task by dropping the sender
+                    drop(keep_alive_tx);
+                    keep_alive_handle.abort();
+                    connection_monitor_handle.abort();
+
+                    let _elapsed_secs = connection_start.elapsed().as_secs();
+
+                    match result {
+                        Ok(Ok(response)) => {
+                            // Convert the complete response to streaming format
+                            // Create a context for response conversion with cloned api_format
+                            let response_ctx = GeminiContext {
+                                api_format: ctx_for_response,
+                                stream: ctx.stream,
+                                model: ctx.model,
+                                vertex: ctx.vertex,
+                                path: ctx.path,
+                                query: ctx.query,
+                            };
+                            let chunks = response_to_stream_chunks(response, &response_ctx).await;
+                            match chunks {
+                                Ok(chunk_stream) => {
+                                    let mut chunk_stream = chunk_stream;
+                                    while let Some(chunk) = chunk_stream.next().await {
+                                        yield chunk;
+                                    }
+                                }
+                                Err(e) => {
+                                    yield Err(axum::Error::new(format!("Failed to convert response: {e}")));
+                                }
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            // Send error in streaming format
+                            let error_ctx = GeminiContext {
+                                api_format: ctx_for_response,
+                                stream: ctx.stream,
+                                model: ctx.model,
+                                vertex: ctx.vertex,
+                                path: ctx.path,
+                                query: ctx.query,
+                            };
+                            let error_chunk = create_error_chunk(&e, &error_ctx);
+                            yield Ok(Bytes::from(error_chunk));
+                        }
+                        Err(_join_error) => {
+                            // Task was cancelled or panicked
+                            let error = ClewdrError::UnexpectedNone {
+                                msg: "API call task failed"
+                            };
+                            let error_ctx = GeminiContext {
+                                api_format: ctx_for_response,
+                                stream: ctx.stream,
+                                model: ctx.model,
+                                vertex: ctx.vertex,
+                                path: ctx.path,
+                                query: ctx.query,
+                            };
+                            let error_chunk = create_error_chunk(&error, &error_ctx);
+                            yield Ok(Bytes::from(error_chunk));
+                        }
+                    }
+                    break;
+                }
+
+                // Keep-alive messages from independent task
+                keep_alive_msg = keep_alive_rx.recv() => {
+                    match keep_alive_msg {
+                        Some(msg) => {
+                            yield Ok(msg);
+                        }
+                        None => {
+                            // Keep-alive task ended (shouldn't happen before API completes)
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("[FAKE_STREAMING] Handler completed");
+        // Ensure the API task is cleaned up
+        // Note: api_task is consumed in the select! above, so we don't need to abort it here
+    }
+}
 
 // Common handler function to process both Gemini and OpenAI format requests
 async fn handle_gemini_request<T: Serialize + Clone + Send + 'static>(
@@ -26,82 +396,40 @@ async fn handle_gemini_request<T: Serialize + Clone + Send + 'static>(
     ctx: GeminiContext,
 ) -> Result<Response, ClewdrError> {
     state.update_from_ctx(&ctx);
-    let GeminiContext {
-        model,
-        stream,
-        vertex,
-        ..
-    } = ctx;
     info!(
         "[REQ] stream: {}, vertex: {}, format: {}, model: {}",
-        enabled(stream),
-        enabled(vertex),
+        enabled(ctx.stream),
+        enabled(ctx.vertex),
         if ctx.api_format == GeminiApiFormat::Gemini {
             ctx.api_format.to_string().green()
         } else {
             ctx.api_format.to_string().yellow()
         },
-        model.green(),
+        ctx.model.green(),
     );
 
-    // For non-streaming requests, we need to handle keep-alive differently
-    if !stream {
-        let stream = keep_alive_stream(state, body);
+    let config = CLEWDR_CONFIG.load();
+
+    // Check if we should use fake streaming
+    if ctx.stream && config.fake_streaming {
+        let stream = fake_streaming_handler(state, body, ctx);
         let res = Response::builder()
-            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_TYPE, "text/event-stream")
+            .header("Cache-Control", "no-cache")
+            .header("Connection", "keep-alive")
             .body(Body::from_stream(stream))?;
         return Ok(res);
     }
 
-    // For streaming requests, proceed as before
+    // For non-streaming requests without fake streaming, return directly
+    if !ctx.stream {
+        let res = state.try_chat(body).await?;
+        return Ok(res);
+    }
+
+    // For real streaming requests, proceed as before
     let res = state.try_chat(body).await?;
     Ok(res)
-}
-
-fn keep_alive_stream<T>(
-    mut state: GeminiState,
-    body: T,
-) -> impl Stream<Item = Result<Bytes, axum::Error>>
-where
-    T: Serialize + Clone + Send + 'static,
-{
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
-    let time_out = std::time::Duration::from_secs(360);
-    stream! {
-        let future = async move {
-            state
-                .try_chat(body.clone())
-                .await
-                .unwrap_or_else(|e| e.into_response())
-                .into_body()
-                .into_data_stream()
-        };
-        let stream = future.into_stream().flatten();
-        pin_mut!(stream);
-        let start = std::time::Instant::now();
-        loop {
-            select! {
-                biased;
-                data = stream.next() => {
-                    match data {
-                        Some(Ok(d)) => yield Ok(d),
-                        Some(Err(e)) => {
-                            yield Err(e);
-                            break;
-                        }
-                        None => break
-                    }
-                }
-                _ = interval.tick() => {
-                    if start.elapsed() > time_out {
-                        break;
-                    }
-                    yield Ok(Bytes::from("\n"));
-                }
-                else => break
-            }
-        }
-    }
 }
 
 pub async fn api_post_gemini(
