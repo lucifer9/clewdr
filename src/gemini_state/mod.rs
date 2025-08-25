@@ -19,7 +19,7 @@ use crate::{
     middleware::gemini::*,
     services::key_actor::KeyActorHandle,
     types::gemini::response::{FinishReason, GeminiResponse},
-    utils::{check_tags_closed, forward_response},
+    utils::{check_tags_closed, check_required_tags_exist, forward_response},
 };
 
 #[derive(Clone, Display, PartialEq, Eq, Debug)]
@@ -435,23 +435,27 @@ impl GeminiState {
                     let config = CLEWDR_CONFIG.load();
                     if !config.check_tags.trim().is_empty() {
                         // Use JSON parsing to extract text content safely
-                        if let Ok(json_value) = serde_json::to_value(&res) {
-                            if let Some(candidates) = json_value["candidates"].as_array() {
-                                if let Some(first_candidate) = candidates.first() {
-                                    if let Some(content) = first_candidate["content"].as_object() {
-                                        if let Some(parts) = content["parts"].as_array() {
-                                            for part in parts {
-                                                if let Some(text) = part["text"].as_str() {
-                                                    if !check_tags_closed(text, &config.check_tags)
-                                                    {
-                                                        info!(
-                                                            "[TAG_CHECK] Content has unclosed tags - will retry"
-                                                        );
-                                                        return Err(ClewdrError::EmptyChoices);
-                                                    }
-                                                }
-                                            }
-                                        }
+                        if let Ok(json_value) = serde_json::to_value(&res)
+                            && let Some(candidates) = json_value["candidates"].as_array()
+                            && let Some(first_candidate) = candidates.first()
+                            && let Some(content) = first_candidate["content"].as_object()
+                            && let Some(parts) = content["parts"].as_array()
+                        {
+                            for part in parts {
+                                if let Some(text) = part["text"].as_str() {
+                                    if !check_tags_closed(text, &config.check_tags)
+                                    {
+                                        info!(
+                                            "[TAG_CHECK] Content has unclosed tags - will retry"
+                                        );
+                                        return Err(ClewdrError::EmptyChoices);
+                                    }
+                                    if !check_required_tags_exist(text, &config.required_tags)
+                                    {
+                                        info!(
+                                            "[REQUIRED_TAGS] Content missing required tags - will retry"
+                                        );
+                                        return Err(ClewdrError::EmptyChoices);
                                     }
                                 }
                             }
@@ -484,14 +488,21 @@ impl GeminiState {
 
                 // Check tag completeness for non-streaming responses
                 let config = CLEWDR_CONFIG.load();
-                if !config.check_tags.trim().is_empty() {
-                    if let Some(message_content) = res["choices"][0]["message"]["content"].as_str()
-                    {
-                        if !check_tags_closed(message_content, &config.check_tags) {
-                            info!("[TAG_CHECK] Content has unclosed tags - will retry");
-                            return Err(ClewdrError::EmptyChoices);
-                        }
-                    }
+                if !config.check_tags.trim().is_empty()
+                    && let Some(message_content) = res["choices"][0]["message"]["content"].as_str()
+                    && !check_tags_closed(message_content, &config.check_tags)
+                {
+                    info!("[TAG_CHECK] Content has unclosed tags - will retry");
+                    return Err(ClewdrError::EmptyChoices);
+                }
+                
+                // Check required tags for non-streaming responses
+                if !config.required_tags.trim().is_empty()
+                    && let Some(message_content) = res["choices"][0]["message"]["content"].as_str()
+                    && !check_required_tags_exist(message_content, &config.required_tags)
+                {
+                    info!("[REQUIRED_TAGS] Content missing required tags - will retry");
+                    return Err(ClewdrError::EmptyChoices);
                 }
             }
         }

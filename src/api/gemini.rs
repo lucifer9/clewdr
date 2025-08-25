@@ -57,48 +57,46 @@ fn convert_openai_to_stream(
     model: String,
 ) -> impl Stream<Item = Result<Bytes, axum::Error>> {
     stream! {
-        if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(&response_text) {
-            if let Some(choices) = response_data["choices"].as_array() {
-                if let Some(first_choice) = choices.first() {
-                    if let Some(content) = first_choice["message"]["content"].as_str() {
-                        let timestamp = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
+        if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(&response_text)
+            && let Some(choices) = response_data["choices"].as_array()
+            && let Some(first_choice) = choices.first()
+            && let Some(content) = first_choice["message"]["content"].as_str()
+        {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
 
-                        // Send complete content as a single chunk to preserve formatting
-                        let chunk_data = json!({
-                            "id": format!("chatcmpl-{}", timestamp),
-                            "object": "chat.completion.chunk",
-                            "created": timestamp,
-                            "model": model,
-                            "choices": [{
-                                "delta": {"content": content},
-                                "index": 0,
-                                "finish_reason": null
-                            }]
-                        });
+            // Send complete content as a single chunk to preserve formatting
+            let chunk_data = json!({
+                "id": format!("chatcmpl-{}", timestamp),
+                "object": "chat.completion.chunk",
+                "created": timestamp,
+                "model": model,
+                "choices": [{
+                    "delta": {"content": content},
+                    "index": 0,
+                    "finish_reason": null
+                }]
+            });
 
-                        yield Ok(Bytes::from(format!("data: {chunk_data}\n\n")));
+            yield Ok(Bytes::from(format!("data: {chunk_data}\n\n")));
 
-                        // Send final chunk with finish_reason
-                        let final_chunk = json!({
-                            "id": format!("chatcmpl-{}", timestamp),
-                            "object": "chat.completion.chunk",
-                            "created": timestamp,
-                            "model": model,
-                            "choices": [{
-                                "delta": {},
-                                "index": 0,
-                                "finish_reason": "stop"
-                            }]
-                        });
+            // Send final chunk with finish_reason
+            let final_chunk = json!({
+                "id": format!("chatcmpl-{}", timestamp),
+                "object": "chat.completion.chunk",
+                "created": timestamp,
+                "model": model,
+                "choices": [{
+                    "delta": {},
+                    "index": 0,
+                    "finish_reason": "stop"
+                }]
+            });
 
-                        yield Ok(Bytes::from(format!("data: {final_chunk}\n\n")));
-                        yield Ok(Bytes::from("data: [DONE]\n\n"));
-                    }
-                }
-            }
+            yield Ok(Bytes::from(format!("data: {final_chunk}\n\n")));
+            yield Ok(Bytes::from("data: [DONE]\n\n"));
         }
     }
 }
@@ -108,40 +106,38 @@ fn convert_gemini_to_stream(
     response_text: String,
 ) -> impl Stream<Item = Result<Bytes, axum::Error>> {
     stream! {
-        if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(&response_text) {
-            if let Some(candidates) = response_data["candidates"].as_array() {
-                if let Some(first_candidate) = candidates.first() {
-                    if let Some(content) = first_candidate["content"]["parts"][0]["text"].as_str() {
-                        // Send complete content as a single chunk to preserve formatting
-                        let chunk_data = json!({
-                            "candidates": [{
-                                "content": {
-                                    "parts": [{"text": content}],
-                                    "role": "model"
-                                },
-                                "finishReason": null,
-                                "index": 0
-                            }]
-                        });
+        if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(&response_text)
+            && let Some(candidates) = response_data["candidates"].as_array()
+            && let Some(first_candidate) = candidates.first()
+            && let Some(content) = first_candidate["content"]["parts"][0]["text"].as_str()
+        {
+            // Send complete content as a single chunk to preserve formatting
+            let chunk_data = json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{"text": content}],
+                        "role": "model"
+                    },
+                    "finishReason": null,
+                    "index": 0
+                }]
+            });
 
-                        yield Ok(Bytes::from(format!("data: {chunk_data}\n\n")));
+            yield Ok(Bytes::from(format!("data: {chunk_data}\n\n")));
 
-                        // Send final chunk with finishReason
-                        let final_chunk = json!({
-                            "candidates": [{
-                                "content": {
-                                    "parts": [{"text": ""}],
-                                    "role": "model"
-                                },
-                                "finishReason": "STOP",
-                                "index": 0
-                            }]
-                        });
+            // Send final chunk with finishReason
+            let final_chunk = json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{"text": ""}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP",
+                    "index": 0
+                }]
+            });
 
-                        yield Ok(Bytes::from(format!("data: {final_chunk}\n\n")));
-                    }
-                }
-            }
+            yield Ok(Bytes::from(format!("data: {final_chunk}\n\n")));
         }
     }
 }
@@ -237,10 +233,10 @@ where
         }
 
         // Fix query parameters: remove alt=sse if present to avoid SSE format response
-        if let Some(alt) = &non_streaming_state.query.alt {
-            if alt == "sse" {
-                non_streaming_state.query.alt = None;
-            }
+        if let Some(alt) = &non_streaming_state.query.alt
+            && alt == "sse"
+        {
+            non_streaming_state.query.alt = None;
         }
 
         // Create channels for communication

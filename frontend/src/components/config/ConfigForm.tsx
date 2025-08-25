@@ -297,6 +297,19 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
           {t("config.sections.tagCheck.note")}
         </div>
 
+        <FormInput
+          id="required_tags"
+          name="required_tags"
+          type="text"
+          value={config.required_tags}
+          onChange={onChange}
+          label={t("config.sections.tagCheck.requiredTags")}
+          placeholder={t("config.sections.tagCheck.requiredTagsPlaceholder")}
+        />
+        <div className="text-xs text-gray-400 mt-2">
+          {t("config.sections.tagCheck.requiredTagsDescription")}
+        </div>
+
         <ConfigCheckbox
           name="save_response_before_tag_check"
           checked={config.save_response_before_tag_check}

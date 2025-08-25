@@ -169,6 +169,53 @@ pub fn check_tags_closed(content: &str, tags_to_check: &str) -> bool {
     true
 }
 
+/// Check if all required tags exist and are properly closed in the content
+/// # Arguments
+/// * `content` - The content to check
+/// * `required_tags` - Comma-separated list of tags that must be present
+/// # Returns  
+/// * `true` if all required tags exist and are properly closed
+/// * `false` if any required tag is missing or not properly closed
+pub fn check_required_tags_exist(content: &str, required_tags: &str) -> bool {
+    if required_tags.trim().is_empty() {
+        return true;
+    }
+
+    let tags: Vec<&str> = required_tags
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if tags.is_empty() {
+        return true;
+    }
+
+    info!(
+        "[REQUIRED_TAGS] Checking required tags: {:?} in content of {} bytes",
+        tags,
+        content.len()
+    );
+
+    for tag in tags {
+        // First check if the tag exists at all
+        let opening_tag = format!("<{tag}");
+        if !content.contains(&opening_tag) {
+            info!("[REQUIRED_TAGS] Required tag '{}' is missing", tag);
+            return false;
+        }
+
+        // Then check if it's properly balanced
+        if !is_tag_balanced(content, tag) {
+            info!("[REQUIRED_TAGS] Required tag '{}' exists but is not properly balanced", tag);
+            return false;
+        }
+    }
+
+    info!("[REQUIRED_TAGS] All required tags exist and are properly balanced");
+    true
+}
+
 /// Check if a specific tag is balanced in the content
 /// Handles self-closing tags and comments properly
 fn is_tag_balanced(content: &str, tag: &str) -> bool {
@@ -454,5 +501,46 @@ mod tests {
     fn test_check_tags_closed_case_insensitive() {
         assert!(check_tags_closed("<DIV>content</DIV>", "div"));
         assert!(check_tags_closed("<Div>content</Div>", "div"));
+    }
+
+    #[test]
+    fn test_check_required_tags_exist_empty_config() {
+        assert!(check_required_tags_exist("any content", ""));
+        assert!(check_required_tags_exist("any content", "   "));
+    }
+
+    #[test]
+    fn test_check_required_tags_exist_all_present_and_closed() {
+        assert!(check_required_tags_exist("<answer>yes</answer>", "answer"));
+        assert!(check_required_tags_exist(
+            "<answer>yes</answer><thinking>process</thinking>",
+            "answer,thinking"
+        ));
+        assert!(check_required_tags_exist(
+            "<div><answer>nested</answer></div>",
+            "div,answer"
+        ));
+    }
+
+    #[test]
+    fn test_check_required_tags_exist_missing_tags() {
+        assert!(!check_required_tags_exist("no tags here", "answer"));
+        assert!(!check_required_tags_exist("<answer>yes</answer>", "answer,thinking"));
+        assert!(!check_required_tags_exist("<thinking>process</thinking>", "answer"));
+    }
+
+    #[test]
+    fn test_check_required_tags_exist_unclosed_tags() {
+        assert!(!check_required_tags_exist("<answer>incomplete", "answer"));
+        assert!(!check_required_tags_exist(
+            "<answer>yes</answer><thinking>incomplete",
+            "answer,thinking"
+        ));
+    }
+
+    #[test]
+    fn test_check_required_tags_exist_with_self_closing() {
+        assert!(check_required_tags_exist("<br/>", "br"));
+        assert!(check_required_tags_exist("<answer>yes</answer><br/>", "answer,br"));
     }
 }

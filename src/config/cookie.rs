@@ -101,14 +101,14 @@ impl CookieStatus {
     /// # Returns
     /// The same CookieStatus with potentially updated reset_time
     pub fn reset(self) -> Self {
-        if let Some(t) = self.reset_time {
-            if t < chrono::Utc::now().timestamp() {
-                info!("Cookie reset time expired");
-                return Self {
-                    reset_time: None,
-                    ..self
-                };
-            }
+        if let Some(t) = self.reset_time
+            && t < chrono::Utc::now().timestamp()
+        {
+            info!("Cookie reset time expired");
+            return Self {
+                reset_time: None,
+                ..self
+            };
         }
         self
     }
@@ -158,12 +158,12 @@ impl FromStr for ClewdrCookie {
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
             .collect::<String>();
 
-        if let Some(captures) = RE.captures(&cleaned) {
-            if let Some(cookie_match) = captures.get(1) {
-                return Ok(Self {
-                    inner: cookie_match.as_str().to_string(),
-                });
-            }
+        if let Some(captures) = RE.captures(&cleaned)
+            && let Some(cookie_match) = captures.get(1)
+        {
+            return Ok(Self {
+                inner: cookie_match.as_str().to_string(),
+            });
         }
 
         Err(ClewdrError::ParseCookieError {
