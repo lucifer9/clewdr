@@ -41,6 +41,7 @@ export interface ConfigData {
 
   // Tag completeness check settings
   check_tags: string;
+  save_response_before_tag_check: boolean;
 }
 
 interface VertexConfig {

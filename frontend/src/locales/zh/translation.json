@@ -156,7 +156,9 @@
         "tags": "检查标签",
         "placeholder": "div,span,p,code",
         "description": "逗号分隔的需要检查闭合的标签列表。如果响应中的这些标签未正确闭合，将自动重试请求。",
-        "note": "注意：仅在fake streaming和non streaming模式下生效，真正的streaming模式不会检查。"
+        "note": "注意：仅在fake streaming和non streaming模式下生效，真正的streaming模式不会检查。",
+        "saveResponse": "标签检查前保存响应内容",
+        "saveResponseDescription": "启用后，在执行标签检查前将响应内容保存到带时间戳的文件中。用于调试标签验证问题。"
       }
     }
   },

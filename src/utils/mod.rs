@@ -85,7 +85,6 @@ pub fn forward_response(in_: wreq::Response) -> Result<http::Response<Body>, Cle
 ///
 /// # Returns
 /// * `String` - The filename that was created
-#[allow(dead_code)]
 fn save_response_content(content: &str, prefix: Option<&str>) -> String {
     let now = chrono::Utc::now();
     let timestamp = now.format("%Y%m%d%H%M%S%3f").to_string();
@@ -132,8 +131,12 @@ pub fn check_tags_closed(content: &str, tags_to_check: &str) -> bool {
         return true;
     }
 
-    // Save content to file for debugging before checking
-    // let filename = save_response_content(content, Some("response"));
+    // Save content to file for debugging before checking if enabled
+    let config = CLEWDR_CONFIG.load();
+    if config.save_response_before_tag_check {
+        let filename = save_response_content(content, Some("response"));
+        info!("[TAG_CHECK] Response content saved to: {}", filename);
+    }
 
     info!(
         "[TAG_CHECK] Checking tags: {:?} in content of {} bytes",
