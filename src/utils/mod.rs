@@ -144,6 +144,20 @@ pub fn check_tags_closed(content: &str, tags_to_check: &str) -> bool {
         content.len()
     );
 
+    // Check comment balance first before checking individual tags
+    if content.contains("<!--") {
+        let comment_starts = content.matches("<!--").count();
+        let comment_ends = content.matches("-->").count();
+        if comment_starts != comment_ends {
+            info!(
+                "[TAG_CHECK] Unbalanced comments detected: {} starts, {} ends",
+                comment_starts, comment_ends
+            );
+            info!("[TAG_CHECK] Cannot check tags due to unbalanced HTML comments");
+            return false;
+        }
+    }
+
     for tag in tags {
         if !is_tag_balanced(content, tag) {
             info!("[TAG_CHECK] Tag '{}' is not balanced", tag);
