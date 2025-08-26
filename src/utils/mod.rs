@@ -158,14 +158,18 @@ pub fn check_tags_closed(content: &str, tags_to_check: &str) -> bool {
         }
     }
 
-    for tag in tags {
-        if !is_tag_balanced(content, tag) {
-            info!("[TAG_CHECK] Tag '{}' is not balanced", tag);
+    // Analyze top-level tags using the new logic
+    let top_level_analysis = analyze_top_level_tags(content, &tags);
+    
+    // Check if any top-level tag is unbalanced
+    for (tag_name, is_balanced) in &top_level_analysis {
+        if !is_balanced {
+            info!("[TAG_CHECK] Top-level tag '{}' is not balanced", tag_name);
             return false;
         }
     }
 
-    info!("[TAG_CHECK] All tags are properly balanced");
+    info!("[TAG_CHECK] All top-level tags are properly balanced");
     true
 }
 
@@ -197,91 +201,215 @@ pub fn check_required_tags_exist(content: &str, required_tags: &str) -> bool {
         content.len()
     );
 
-    for tag in tags {
+    for tag in &tags {
         // First check if the tag exists at all
         let opening_tag = format!("<{tag}");
         if !content.contains(&opening_tag) {
             info!("[REQUIRED_TAGS] Required tag '{}' is missing", tag);
             return false;
         }
+    }
 
-        // Then check if it's properly balanced
-        if !is_tag_balanced(content, tag) {
-            info!("[REQUIRED_TAGS] Required tag '{}' exists but is not properly balanced", tag);
+    // Analyze top-level tags to check if required tags appear at top level and are balanced
+    let top_level_analysis = analyze_top_level_tags(content, &tags);
+    
+    // Check if all required tags appear at top level and are balanced
+    for tag in tags {
+        if let Some((_, is_balanced)) = top_level_analysis.iter().find(|(name, _)| name == tag) {
+            if !is_balanced {
+                info!("[REQUIRED_TAGS] Required tag '{}' appears at top level but is not properly balanced", tag);
+                return false;
+            }
+        } else {
+            info!("[REQUIRED_TAGS] Required tag '{}' does not appear at top level", tag);
             return false;
         }
     }
 
-    info!("[REQUIRED_TAGS] All required tags exist and are properly balanced");
+    info!("[REQUIRED_TAGS] All required tags appear at top level and are properly balanced");
     true
 }
 
-/// Check if a specific tag is balanced in the content
-/// Handles self-closing tags and comments properly
-fn is_tag_balanced(content: &str, tag: &str) -> bool {
-    let opening_tag = format!("<{tag}");
-    let closing_tag = format!("</{tag}>");
-    let self_closing_tag = format!("<{tag}/>");
-
-    // Check comment balance first
-    if content.contains("<!--") {
-        let comment_starts = content.matches("<!--").count();
-        let comment_ends = content.matches("-->").count();
-        if comment_starts != comment_ends {
-            info!(
-                "[TAG_CHECK] Unbalanced comments detected: {} starts, {} ends",
-                comment_starts, comment_ends
-            );
-            return false;
-        }
-    }
-
+/// Analyze which tags appear at the top level and whether they are balanced
+/// Returns a vector of (tag_name, is_balanced) for all tags that appear at top level
+fn analyze_top_level_tags(content: &str, tags_to_check: &[&str]) -> Vec<(String, bool)> {
     // Remove comments to avoid false positives
     let content_without_comments = remove_comments(content);
-
+    
     // If remove_comments returned empty string due to malformed comments,
     // treat as incomplete content
     if content.contains("<!--") && content_without_comments.is_empty() {
-        return false;
+        return vec![];
     }
 
-    let mut stack = Vec::new();
+    let mut result = Vec::new();
+    let mut nesting_depth = 0; // Depth of nesting in any of the specified tags
     let mut i = 0;
     let chars: Vec<char> = content_without_comments.chars().collect();
 
+    // Track balance count for each top-level tag (opening - closing)
+    let mut top_level_balance: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+
     while i < chars.len() {
         if chars[i] == '<' {
-            // Try to match self-closing tag first
-            if let Some(end_pos) = find_tag_end(&chars, i, &self_closing_tag) {
-                // Self-closing tag found, continue
-                i = end_pos + 1;
-                continue;
-            }
+            let mut matched_tag = None;
+            let mut is_closing = false;
+            let mut is_self_closing = false;
 
-            // Try to match closing tag
-            if let Some(end_pos) = find_tag_end(&chars, i, &closing_tag) {
-                if stack.is_empty() {
-                    // Closing tag without opening tag
-                    return false;
+            // Check for closing tag first
+            if i + 1 < chars.len() && chars[i + 1] == '/' {
+                // First try to match our specified tags
+                for &tag in tags_to_check {
+                    let closing_tag = format!("</{}>", tag);
+                    if let Some(end_pos) = find_tag_end(&chars, i, &closing_tag) {
+                        matched_tag = Some((tag.to_string(), true)); // true means it's a tracked tag
+                        is_closing = true;
+                        i = end_pos + 1;
+                        break;
+                    }
                 }
-                stack.pop();
-                i = end_pos + 1;
-                continue;
+                
+                // If not found, check if it's any other tag that could affect nesting
+                if matched_tag.is_none() {
+                    // Try to match any tag pattern for nesting purposes
+                    if i + 2 < chars.len() && chars[i + 2].is_alphabetic() {
+                        let mut j = i + 2;
+                        while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '-' || chars[j] == '_') {
+                            j += 1;
+                        }
+                        if j < chars.len() && chars[j] == '>' {
+                            // Found a non-tracked closing tag
+                            matched_tag = Some(("_other".to_string(), false)); // false means it's not tracked
+                            is_closing = true;
+                            i = j + 1;
+                        }
+                    }
+                }
+            } else {
+                // Check for opening or self-closing tag
+                for &tag in tags_to_check {
+                    let opening_tag = format!("<{}", tag);
+                    let self_closing_tag = format!("<{}/>", tag);
+                    
+                    // Try self-closing first
+                    if let Some(end_pos) = find_tag_end(&chars, i, &self_closing_tag) {
+                        matched_tag = Some((tag.to_string(), true));
+                        is_self_closing = true;
+                        i = end_pos + 1;
+                        break;
+                    }
+                    
+                    // Try opening tag
+                    if let Some(end_pos) = find_opening_tag_end(&chars, i, &opening_tag) {
+                        matched_tag = Some((tag.to_string(), true));
+                        i = end_pos + 1;
+                        break;
+                    }
+                }
+                
+                // If not found, check if it's any other opening tag
+                if matched_tag.is_none()
+                    && chars[i + 1].is_alphabetic() {
+                        let mut j = i + 1;
+                        while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '-' || chars[j] == '_') {
+                            j += 1;
+                        }
+                        // Find the closing > of this tag
+                        while j < chars.len() && chars[j] != '>' {
+                            if chars[j] == '"' || chars[j] == '\'' {
+                                let quote = chars[j];
+                                j += 1;
+                                while j < chars.len() && chars[j] != quote {
+                                    j += 1;
+                                }
+                                if j < chars.len() { j += 1; }
+                            } else {
+                                j += 1;
+                            }
+                        }
+                        if j < chars.len() && chars[j] == '>' {
+                            // Check if it's self-closing
+                            if j > 0 && chars[j - 1] == '/' {
+                                // Self-closing non-tracked tag - doesn't affect nesting
+                                i = j + 1;
+                                continue;
+                            } else {
+                                // Found a non-tracked opening tag
+                                matched_tag = Some(("_other".to_string(), false));
+                                i = j + 1;
+                            }
+                        }
+                    }
             }
 
-            // Try to match opening tag
-            if let Some(end_pos) = find_opening_tag_end(&chars, i, &opening_tag) {
-                stack.push(tag);
-                i = end_pos + 1;
+            if let Some((tag_name, is_tracked)) = matched_tag {
+                if is_self_closing && is_tracked {
+                    // Self-closing tracked tags at top level are always balanced
+                    if nesting_depth == 0 {
+                        // This is a top-level tag - always balanced for self-closing
+                        if !result.iter().any(|(name, _)| name == &tag_name) {
+                            result.push((tag_name.clone(), true));
+                        }
+                    }
+                } else if is_closing {
+                    if is_tracked {
+                        // Always decrease nesting depth first
+                        nesting_depth -= 1;
+                        
+                        // Handle closing tag - check if this was a top-level closing tag
+                        if nesting_depth == 0 {
+                            // This was a top-level closing tag
+                            let count = top_level_balance.entry(tag_name.clone()).or_insert(0);
+                            *count -= 1;
+                            
+                            // Make sure we have an entry in result for this tag
+                            if !result.iter().any(|(name, _)| name == &tag_name) {
+                                result.push((tag_name.clone(), false)); // Will be updated later
+                            }
+                        }
+                    } else {
+                        // Non-tracked closing tag
+                        if nesting_depth > 0 {
+                            nesting_depth -= 1;
+                        }
+                    }
+                } else {
+                    // Handle opening tag
+                    if is_tracked {
+                        if nesting_depth == 0 {
+                            // This is a top-level opening tag
+                            let count = top_level_balance.entry(tag_name.clone()).or_insert(0);
+                            *count += 1;
+                            
+                            // Add to result if not already there
+                            if !result.iter().any(|(name, _)| name == &tag_name) {
+                                result.push((tag_name.clone(), false)); // Will be updated later
+                            }
+                        }
+                        
+                        // Increase nesting depth for any tracked tag
+                        nesting_depth += 1;
+                    } else {
+                        // Non-tracked opening tag
+                        nesting_depth += 1;
+                    }
+                }
                 continue;
             }
         }
         i += 1;
     }
 
-    // All tags should be closed
-    stack.is_empty()
+    // Update balance status based on counts
+    for (tag_name, is_balanced) in &mut result {
+        if let Some(&balance) = top_level_balance.get(tag_name) {
+            *is_balanced = balance == 0;
+        }
+    }
+
+    result
 }
+
 
 /// Find the end position of a specific tag
 fn find_tag_end(chars: &[char], start: usize, tag: &str) -> Option<usize> {
@@ -445,6 +573,8 @@ mod tests {
             "<div>content</div><span>test</span>",
             "div,span"
         ));
+        // In the new top-level logic, only div is checked as top-level tag
+        // span is nested inside div and not checked for balance
         assert!(check_tags_closed(
             "<div><span>nested</span></div>",
             "div,span"
@@ -462,7 +592,11 @@ mod tests {
     fn test_check_tags_closed_unbalanced() {
         assert!(!check_tags_closed("<div>content", "div"));
         assert!(!check_tags_closed("<div>content</span>", "div"));
-        assert!(!check_tags_closed("<div><span>nested</div>", "span"));
+        // In the new logic, only div is checked as top-level. Since div is properly closed,
+        // and span only appears as nested tag, this should pass now
+        assert!(check_tags_closed("<div><span>nested</div>", "span"));
+        // But if we're checking for div, it should fail because div is not closed properly
+        assert!(!check_tags_closed("<div><span>nested</div>", "div"));
     }
 
     #[test]
@@ -486,6 +620,7 @@ mod tests {
             "<!-- comment --><div>content</div>",
             "div"
         ));
+        // In comments, tags are ignored. Only div is at top level and is balanced
         assert!(check_tags_closed(
             "<div><!-- <span>inside comment</span> --></div>",
             "div,span"
@@ -516,8 +651,15 @@ mod tests {
             "<answer>yes</answer><thinking>process</thinking>",
             "answer,thinking"
         ));
-        assert!(check_required_tags_exist(
+        // In the new logic, answer must be at top level. Here div is top-level and answer is nested,
+        // so this should fail
+        assert!(!check_required_tags_exist(
             "<div><answer>nested</answer></div>",
+            "answer"
+        ));
+        // But this should pass because div is top-level and answer is also at top level
+        assert!(check_required_tags_exist(
+            "<div></div><answer>nested</answer>",
             "div,answer"
         ));
     }
@@ -542,5 +684,60 @@ mod tests {
     fn test_check_required_tags_exist_with_self_closing() {
         assert!(check_required_tags_exist("<br/>", "br"));
         assert!(check_required_tags_exist("<answer>yes</answer><br/>", "answer,br"));
+    }
+
+    #[test]
+    fn test_check_tags_closed_top_level_logic() {
+        // Content tag contains answer tag - content is top level and balanced
+        assert!(check_tags_closed("<content><answer></answer></content>", "content,answer"));
+        
+        // Answer tag contains content tag - answer is top level and balanced
+        assert!(check_tags_closed("<answer><content></content></answer>", "content,answer"));
+        
+        // Content tag with unclosed answer inside - content is top level and balanced (answer is nested)
+        assert!(check_tags_closed("<content><answer></content>", "content,answer"));
+        
+        // Both tags at top level and balanced
+        assert!(check_tags_closed("<content></content><answer></answer>", "content,answer"));
+        
+        // Cross-tag closure - should fail because answer tries to close outside content
+        assert!(!check_tags_closed("<content><answer></content></answer>", "content,answer"));
+        
+        // Unclosed top-level tag should fail
+        assert!(!check_tags_closed("<content><answer></answer>", "content"));
+    }
+
+    #[test]
+    fn test_check_required_tags_exist_top_level_logic() {
+        // Required tag exists at top level - should pass
+        assert!(check_required_tags_exist("<answer><content></content></answer>", "answer"));
+        
+        // Required tag exists but only nested inside another specified tag - should fail
+        assert!(!check_required_tags_exist("<content><answer></answer></content>", "answer"));
+        
+        // Multiple required tags both at top level - should pass
+        assert!(check_required_tags_exist("<content></content><answer></answer>", "content,answer"));
+        
+        // One required tag at top level, one nested - should fail
+        assert!(!check_required_tags_exist("<content><answer></answer></content>", "content,answer"));
+        
+        // Required tag at top level but unclosed - should fail
+        assert!(!check_required_tags_exist("<answer><content></content>", "answer"));
+    }
+
+    #[test]
+    fn test_analyze_top_level_tags_function() {
+        // Test the core analyze function directly
+        let result = analyze_top_level_tags("<content><answer></answer></content>", &["content", "answer"]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "content");
+        assert_eq!(result[0].1, true); // content is balanced
+        
+        // Test cross-tag closure
+        let result = analyze_top_level_tags("<content><answer></content></answer>", &["content", "answer"]);
+        assert_eq!(result.len(), 2);
+        // Both should be marked as unbalanced due to improper nesting
+        assert!(result.iter().any(|(name, balanced)| name == "content" && !balanced));
+        assert!(result.iter().any(|(name, balanced)| name == "answer" && !balanced));
     }
 }
