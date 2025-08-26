@@ -19,7 +19,7 @@ use crate::{
     middleware::gemini::*,
     services::key_actor::KeyActorHandle,
     types::gemini::response::{FinishReason, GeminiResponse},
-    utils::{check_tags_closed, check_required_tags_exist, forward_response},
+    utils::{forward_response, validate_required_tags},
 };
 
 #[derive(Clone, Display, PartialEq, Eq, Debug)]
@@ -431,9 +431,9 @@ impl GeminiState {
                         return Err(ClewdrError::EmptyChoices);
                     }
 
-                    // Check tag completeness for non-streaming responses
+                    // Check tag validation for streaming responses
                     let config = CLEWDR_CONFIG.load();
-                    if !config.check_tags.trim().is_empty() {
+                    if !config.required_tags.trim().is_empty() {
                         // Use JSON parsing to extract text content safely
                         if let Ok(json_value) = serde_json::to_value(&res)
                             && let Some(candidates) = json_value["candidates"].as_array()
@@ -442,22 +442,14 @@ impl GeminiState {
                             && let Some(parts) = content["parts"].as_array()
                         {
                             for part in parts {
-                                if let Some(text) = part["text"].as_str() {
-                                    if !check_tags_closed(text, &config.check_tags)
-                                    {
+                                if let Some(text) = part["text"].as_str()
+                                    && let Err(error) = validate_required_tags(text, &config.required_tags) {
                                         info!(
-                                            "[TAG_CHECK] Content has unclosed tags - will retry"
+                                            "[TAG_VALIDATION] Content validation failed: {} - will retry",
+                                            error
                                         );
                                         return Err(ClewdrError::EmptyChoices);
                                     }
-                                    if !check_required_tags_exist(text, &config.required_tags)
-                                    {
-                                        info!(
-                                            "[REQUIRED_TAGS] Content missing required tags - will retry"
-                                        );
-                                        return Err(ClewdrError::EmptyChoices);
-                                    }
-                                }
                             }
                         }
                     }
@@ -486,24 +478,14 @@ impl GeminiState {
                     return Err(ClewdrError::EmptyChoices);
                 }
 
-                // Check tag completeness for non-streaming responses
+                // Check tag validation for non-streaming responses
                 let config = CLEWDR_CONFIG.load();
-                if !config.check_tags.trim().is_empty()
-                    && let Some(message_content) = res["choices"][0]["message"]["content"].as_str()
-                    && !check_tags_closed(message_content, &config.check_tags)
-                {
-                    info!("[TAG_CHECK] Content has unclosed tags - will retry");
-                    return Err(ClewdrError::EmptyChoices);
-                }
-                
-                // Check required tags for non-streaming responses
                 if !config.required_tags.trim().is_empty()
                     && let Some(message_content) = res["choices"][0]["message"]["content"].as_str()
-                    && !check_required_tags_exist(message_content, &config.required_tags)
-                {
-                    info!("[REQUIRED_TAGS] Content missing required tags - will retry");
-                    return Err(ClewdrError::EmptyChoices);
-                }
+                    && let Err(error) = validate_required_tags(message_content, &config.required_tags) {
+                        info!("[TAG_VALIDATION] Content validation failed: {} - will retry", error);
+                        return Err(ClewdrError::EmptyChoices);
+                    }
             }
         }
         Ok(Response::builder()

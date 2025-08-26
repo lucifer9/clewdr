@@ -151,8 +151,6 @@ pub struct ClewdrConfig {
 
     // Tag completeness check settings, can hot reload
     #[serde(default)]
-    pub check_tags: String,
-    #[serde(default)]
     pub required_tags: String,
     #[serde(default)]
     pub save_response_before_tag_check: bool,
@@ -195,7 +193,6 @@ impl Default for ClewdrConfig {
             skip_normal_pro: false,
             claude_code_client_id: None,
             custom_system: None,
-            check_tags: String::new(),
             required_tags: String::new(),
             save_response_before_tag_check: false,
             no_fs: false,
