@@ -438,7 +438,8 @@ impl GeminiState {
                 }
                 GeminiApiFormat::OpenAI => {
                     if let Ok(res) = serde_json::from_slice::<Value>(&bytes) {
-                        if let Some(content) = res["choices"][0]["message"]["content"].as_str() {
+                        if let Some(content) = res["choices"].get(0)
+                            .and_then(|c| c["message"]["content"].as_str()) {
                             if !content.is_empty() {
                                 if let Err(e) = tokio::fs::write(&filename, content).await {
                                     error!("Failed to save content to {}: {}", filename, e);
@@ -449,7 +450,8 @@ impl GeminiState {
                                 info!("Content is empty");
                             }
                         } else {
-                            let finish_reason = res["choices"][0]["finish_reason"].as_str();
+                            let finish_reason = res["choices"].get(0)
+                                .and_then(|c| c["finish_reason"].as_str());
                             info!("No content field, finish_reason: {:?}", finish_reason);
                         }
                     }
@@ -537,14 +539,16 @@ impl GeminiState {
                 if res["choices"].as_array().is_some_and(|v| v.is_empty()) {
                     return Err(ClewdrError::EmptyChoices);
                 }
-                if res["choices"][0]["finish_reason"] == "OTHER" {
+                if res["choices"].get(0)
+                    .and_then(|c| c["finish_reason"].as_str()) == Some("OTHER") {
                     return Err(ClewdrError::EmptyChoices);
                 }
 
                 // Check tag validation for non-streaming responses
                 let config = CLEWDR_CONFIG.load();
                 if !config.required_tags.trim().is_empty()
-                    && let Some(message_content) = res["choices"][0]["message"]["content"].as_str()
+                    && let Some(message_content) = res["choices"].get(0)
+                        .and_then(|c| c["message"]["content"].as_str())
                     && let Err(error) = validate_required_tags(message_content, &config.required_tags) {
                         info!("[TAG_VALIDATION] Content validation failed: {} - will retry", error);
                         return Err(ClewdrError::EmptyChoices);

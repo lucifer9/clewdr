@@ -410,8 +410,8 @@ impl CheckClaudeErr for Response {
         // check if the error is a rate limit error
         if status == 429 {
             // get the reset time from the error message
-            let ts = inner_error.message["resetsAt"]
-                .as_i64()
+            let ts = inner_error.message.get("resetsAt")
+                .and_then(|v| v.as_i64())
                 .or_else(|| reset_header.and_then(|h| h.to_str().ok()?.parse::<i64>().ok()));
             if let Some(ts) = ts {
                 let reset_time = chrono::DateTime::from_timestamp(ts, 0)

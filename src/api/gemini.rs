@@ -109,7 +109,12 @@ fn convert_gemini_to_stream(
         if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(&response_text)
             && let Some(candidates) = response_data["candidates"].as_array()
             && let Some(first_candidate) = candidates.first()
-            && let Some(content) = first_candidate["content"]["parts"][0]["text"].as_str()
+            && let Some(content) = first_candidate.get("content")
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|part| part.get("text"))
+                .and_then(|t| t.as_str())
         {
             // Send complete content as a single chunk to preserve formatting
             let chunk_data = json!({

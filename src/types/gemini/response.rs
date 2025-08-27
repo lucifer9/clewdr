@@ -76,7 +76,7 @@ mod tests {
 
         let response = result.unwrap();
         assert_eq!(response.candidates.len(), 1);
-        let candidate = &response.candidates[0];
+        let candidate = response.candidates.first().expect("Test assumes candidates exists");
         assert_eq!(candidate.finishReason, Some(FinishReason::PROHIBITED_CONTENT));
         
         // The fix allows parsing with empty content object, but it becomes Some with empty/default values
@@ -109,7 +109,7 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse normal response: {:?}", result.err());
 
         let response = result.unwrap();
-        let candidate = &response.candidates[0];
+        let candidate = response.candidates.first().expect("Test assumes candidates exists");
         assert_eq!(candidate.finishReason, Some(FinishReason::STOP));
         assert!(candidate.content.is_some(), "Content should be Some for normal response");
         
