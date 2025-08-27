@@ -279,24 +279,8 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
         />
       </ConfigSection>
 
-      {/* Tag Completeness Check Section */}
+      {/* Tag Validation Section */}
       <ConfigSection title={t("config.sections.tagCheck.title")}>
-        <FormInput
-          id="check_tags"
-          name="check_tags"
-          type="text"
-          value={config.check_tags}
-          onChange={onChange}
-          label={t("config.sections.tagCheck.tags")}
-          placeholder={t("config.sections.tagCheck.placeholder")}
-        />
-        <div className="text-xs text-gray-400 mt-2">
-          {t("config.sections.tagCheck.description")}
-        </div>
-        <div className="text-xs text-amber-400 mt-1">
-          {t("config.sections.tagCheck.note")}
-        </div>
-
         <FormInput
           id="required_tags"
           name="required_tags"

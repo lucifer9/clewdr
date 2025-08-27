@@ -39,8 +39,7 @@ export interface ConfigData {
   custom_a: string | null;
   custom_prompt: string;
 
-  // Tag completeness check settings
-  check_tags: string;
+  // Tag validation settings
   required_tags: string;
   save_response_before_tag_check: boolean;
 }

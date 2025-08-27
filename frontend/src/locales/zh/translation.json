@@ -152,11 +152,7 @@
         "customPrompt": "自定义提示词"
       },
       "tagCheck": {
-        "title": "标签完整性检查",
-        "tags": "检查标签",
-        "placeholder": "div,span,p,code",
-        "description": "逗号分隔的需要检查闭合的标签列表。如果响应中的这些标签未正确闭合，将自动重试请求。",
-        "note": "注意：仅在fake streaming和non streaming模式下生效，真正的streaming模式不会检查。",
+        "title": "标签验证",
         "requiredTags": "必需标签",
         "requiredTagsPlaceholder": "html,body,script",
         "requiredTagsDescription": "逗号分隔的必须存在于响应中的标签列表。如果这些标签缺失，将自动重试请求。",

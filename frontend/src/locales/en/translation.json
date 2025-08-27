@@ -152,11 +152,7 @@
         "customPrompt": "Custom Prompt"
       },
       "tagCheck": {
-        "title": "Tag Completeness Check",
-        "tags": "Tags to Check",
-        "placeholder": "div,span,p,code",
-        "description": "Comma-separated list of tags to check for proper closure. If these tags are not properly closed in the response, the request will be automatically retried.",
-        "note": "Note: Only effective in fake streaming and non-streaming modes. Real streaming mode will not perform tag checking.",
+        "title": "Tag Validation",
         "requiredTags": "Required Tags",
         "requiredTagsPlaceholder": "html,body,script",
         "requiredTagsDescription": "Comma-separated list of tags that must be present in the response. If these tags are missing, the request will be automatically retried.",
