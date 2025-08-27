@@ -100,8 +100,9 @@ pub enum Part {
 #[derive(Serialize, Deserialize, Debug, Clone, Hash)]
 pub struct Chat {
     #[serde(default)]
-    role: Role,
-    parts: Vec<Part>,
+    pub role: Role,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<Part>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash)]

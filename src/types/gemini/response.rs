@@ -47,3 +47,77 @@ pub struct GeminiResponse {
     pub modelVersion: String,
     pub promptFeedback: Option<Value>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_prohibited_content_response_parsing() {
+        let prohibited_response = json!({
+            "candidates": [
+                {
+                    "content": {},
+                    "finishReason": "PROHIBITED_CONTENT"
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 116295,
+                "totalTokenCount": 116295,
+                "trafficType": "ON_DEMAND"
+            },
+            "modelVersion": "gemini-2.5-pro"
+        });
+
+        // This should now parse successfully instead of failing
+        let result = serde_json::from_value::<GeminiResponse>(prohibited_response);
+        assert!(result.is_ok(), "Failed to parse PROHIBITED_CONTENT response: {:?}", result.err());
+
+        let response = result.unwrap();
+        assert_eq!(response.candidates.len(), 1);
+        let candidate = &response.candidates[0];
+        assert_eq!(candidate.finishReason, Some(FinishReason::PROHIBITED_CONTENT));
+        
+        // The fix allows parsing with empty content object, but it becomes Some with empty/default values
+        if let Some(content) = &candidate.content {
+            // Content exists but parts should be None due to the empty object
+            assert!(content.parts.is_none(), "Parts should be None for empty content object");
+        }
+    }
+
+    #[test]
+    fn test_normal_response_parsing() {
+        let normal_response = json!({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Hello world"}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "totalTokenCount": 15
+            },
+            "modelVersion": "gemini-2.5-pro"
+        });
+
+        let result = serde_json::from_value::<GeminiResponse>(normal_response);
+        assert!(result.is_ok(), "Failed to parse normal response: {:?}", result.err());
+
+        let response = result.unwrap();
+        let candidate = &response.candidates[0];
+        assert_eq!(candidate.finishReason, Some(FinishReason::STOP));
+        assert!(candidate.content.is_some(), "Content should be Some for normal response");
+        
+        if let Some(content) = &candidate.content {
+            assert!(content.parts.is_some(), "Parts should be Some for normal response");
+            if let Some(parts) = &content.parts {
+                assert_eq!(parts.len(), 1);
+            }
+        }
+    }
+}
