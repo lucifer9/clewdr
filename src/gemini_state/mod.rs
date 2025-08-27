@@ -1,6 +1,7 @@
 use std::sync::LazyLock;
 
 use axum::response::Response;
+use chrono::Local;
 use colored::Colorize;
 use http::header::CONTENT_TYPE;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -18,7 +19,10 @@ use crate::{
     error::{CheckGeminiErr, ClewdrError, InvalidUriSnafu, WreqSnafu},
     middleware::gemini::*,
     services::key_actor::KeyActorHandle,
-    types::gemini::response::{FinishReason, GeminiResponse},
+    types::gemini::{
+        request::Part,
+        response::{FinishReason, GeminiResponse},
+    },
     utils::{forward_response, validate_required_tags},
 };
 
@@ -393,6 +397,65 @@ impl GeminiState {
         })?;
 
         info!("[CHECK_EMPTY] Response body length: {} bytes", bytes.len());
+
+        // Check configuration and save content if enabled
+        let config = CLEWDR_CONFIG.load();
+        if config.save_response_before_tag_check {
+            let timestamp = Local::now().format("%Y%m%d%H%M%S%3f");
+            let filename = format!("response-{}.txt", timestamp);
+            
+            // Try to parse response to extract content
+            match self.api_format {
+                GeminiApiFormat::Gemini => {
+                    if let Ok(res) = serde_json::from_slice::<GeminiResponse>(&bytes)
+                        && let Some(candidate) = res.candidates.first() {
+                            if let Some(content) = &candidate.content {
+                                if let Some(parts) = &content.parts {
+                                    // Extract all text content
+                                    let mut text_content = String::new();
+                                    for part in parts {
+                                        if let Part::Text { text, .. } = part {
+                                            text_content.push_str(text);
+                                        }
+                                    }
+                                    if !text_content.is_empty() {
+                                        if let Err(e) = tokio::fs::write(&filename, &text_content).await {
+                                            error!("Failed to save content to {}: {}", filename, e);
+                                        } else {
+                                            info!("Content saved to {}", filename);
+                                        }
+                                    } else {
+                                        info!("No text content to save");
+                                    }
+                                } else {
+                                    info!("No parts in content (empty response)");
+                                }
+                            } else {
+                                // content为空，打印原因
+                                info!("Content is empty, finishReason: {:?}", candidate.finishReason);
+                            }
+                        }
+                }
+                GeminiApiFormat::OpenAI => {
+                    if let Ok(res) = serde_json::from_slice::<Value>(&bytes) {
+                        if let Some(content) = res["choices"][0]["message"]["content"].as_str() {
+                            if !content.is_empty() {
+                                if let Err(e) = tokio::fs::write(&filename, content).await {
+                                    error!("Failed to save content to {}: {}", filename, e);
+                                } else {
+                                    info!("Content saved to {}", filename);
+                                }
+                            } else {
+                                info!("Content is empty");
+                            }
+                        } else {
+                            let finish_reason = res["choices"][0]["finish_reason"].as_str();
+                            info!("No content field, finish_reason: {:?}", finish_reason);
+                        }
+                    }
+                }
+            }
+        }
 
         match self.api_format {
             GeminiApiFormat::Gemini => {

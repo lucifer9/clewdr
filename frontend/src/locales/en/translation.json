@@ -160,8 +160,8 @@
         "requiredTags": "Required Tags",
         "requiredTagsPlaceholder": "html,body,script",
         "requiredTagsDescription": "Comma-separated list of tags that must be present in the response. If these tags are missing, the request will be automatically retried.",
-        "saveResponse": "Save Response Content Before Tag Check",
-        "saveResponseDescription": "When enabled, saves the response content to a timestamped file before performing tag checking. Useful for debugging tag validation issues."
+        "saveResponse": "Save Response Content",
+        "saveResponseDescription": "Saves response text content after receipt (non-streaming modes only). Empty responses log the reason. Files saved as response-{timestamp}.txt."
       }
     }
   },

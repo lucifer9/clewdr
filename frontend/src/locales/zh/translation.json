@@ -160,8 +160,8 @@
         "requiredTags": "必需标签",
         "requiredTagsPlaceholder": "html,body,script",
         "requiredTagsDescription": "逗号分隔的必须存在于响应中的标签列表。如果这些标签缺失，将自动重试请求。",
-        "saveResponse": "标签检查前保存响应内容",
-        "saveResponseDescription": "启用后，在执行标签检查前将响应内容保存到带时间戳的文件中。用于调试标签验证问题。"
+        "saveResponse": "保存响应内容",
+        "saveResponseDescription": "收到响应后保存文本内容（仅非流式模式）。空响应将记录原因。文件保存为 response-{timestamp}.txt。"
       }
     }
   },
