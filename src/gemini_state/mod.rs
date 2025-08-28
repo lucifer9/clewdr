@@ -11,7 +11,7 @@ use snafu::ResultExt;
 use strum::Display;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use wreq::{Client, ClientBuilder, header::AUTHORIZATION};
 use yup_oauth2::{CustomHyperClientBuilder, ServiceAccountAuthenticator, ServiceAccountKey};
 
@@ -122,8 +122,25 @@ impl GeminiState {
 
     pub async fn report_429(&self) -> Result<(), ClewdrError> {
         if let Some(mut key) = self.key.to_owned() {
+            info!(
+                "[KEY_MGMT] Setting 429 cooldown for key: {}",
+                key.key.ellipse().green()
+            );
+            let old_cooldown = key.cooldown_until;
             key.set_429_cooldown();
-            self.key_handle.return_key(key).await?;
+            info!(
+                "[KEY_MGMT] Cooldown updated: {:?} -> {:?}",
+                old_cooldown, key.cooldown_until
+            );
+            match self.key_handle.return_key(key).await {
+                Ok(_) => info!("[KEY_MGMT] Key returned to pool successfully after 429"),
+                Err(e) => {
+                    error!("[KEY_MGMT] Failed to return key to pool after 429: {}", e);
+                    return Err(e);
+                }
+            }
+        } else {
+            warn!("[KEY_MGMT] No key available to set 429 cooldown");
         }
         Ok(())
     }
@@ -310,30 +327,31 @@ impl GeminiState {
             if i > 0 {
                 info!("[RETRY] attempt: {}", i.to_string().green());
             }
-            let state = self.to_owned();
             let p = p.to_owned();
 
             let send_chat_task = async {
                 let mut temp_state = self.to_owned();
-                temp_state.send_chat(p).await
+                let result = temp_state.send_chat(p).await;
+                (temp_state, result)
             };
 
             let result = tokio::select! {
-                res = send_chat_task => res,
+                (temp_state, res) = send_chat_task => (temp_state, res),
                 _ = cancellation_token.cancelled() => {
                     info!("[CANCELLED] Gemini request cancelled during send_chat");
                     return Err(ClewdrError::RequestCancelled);
                 }
             };
 
-            match result {
+            match result.1 {
                 Ok(resp) => {
                     let check_state = self.to_owned();
                     match check_state.check_empty_choices(resp).await {
                         Ok(resp) => {
                             // 成功处理请求，更新密钥状态
+                            let success_state = result.0;
                             spawn(async move {
-                                state.report_success().await.unwrap_or_else(|e| {
+                                success_state.report_success().await.unwrap_or_else(|e| {
                                     error!("Failed to report success: {}", e);
                                 });
                             });
@@ -347,9 +365,8 @@ impl GeminiState {
                     }
                 },
                 Err(e) => {
-                    // Create a new state instance for error handling
-                    let state_for_error = self.to_owned();
-                    if let Some(key) = state_for_error.key.to_owned() {
+                    let error_state = result.0;
+                    if let Some(key) = error_state.key.to_owned() {
                         error!("[{}] {}", key.key.ellipse().green(), e);
                     } else {
                         error!("{}", e);
@@ -359,23 +376,21 @@ impl GeminiState {
                             match code.as_u16() {
                                 400 => {
                                     spawn(async move {
-                                        state_for_error.report_400().await.unwrap_or_else(|e| {
+                                        error_state.report_400().await.unwrap_or_else(|e| {
                                             error!("Failed to report 400: {}", e);
                                         });
                                     });
                                 }
                                 403 => {
-                                    let state_403 = self.to_owned();
                                     spawn(async move {
-                                        state_403.report_403().await.unwrap_or_else(|e| {
+                                        error_state.report_403().await.unwrap_or_else(|e| {
                                             error!("Failed to report 403: {}", e);
                                         });
                                     });
                                 }
                                 429 => {
-                                    let state_429 = self.to_owned();
                                     spawn(async move {
-                                        state_429.report_429().await.unwrap_or_else(|e| {
+                                        error_state.report_429().await.unwrap_or_else(|e| {
                                             error!("Failed to report 429: {}", e);
                                         });
                                     });

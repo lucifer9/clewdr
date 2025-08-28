@@ -39,6 +39,7 @@ struct KeyActor;
 impl KeyActor {
     /// Saves the current state of keys to the configuration
     fn save(state: &KeyActorState) {
+        info!("[KEY_ACTOR] Updating configuration with {} keys", state.len());
         CLEWDR_CONFIG.rcu(|config| {
             let mut config = ClewdrConfig::clone(config);
             config.gemini_keys = state.iter().cloned().collect();
@@ -46,10 +47,11 @@ impl KeyActor {
         });
 
         tokio::spawn(async move {
+            info!("[KEY_ACTOR] Starting configuration file save...");
             let result = CLEWDR_CONFIG.load().save().await;
             match result {
-                Ok(_) => info!("Configuration saved successfully"),
-                Err(e) => error!("Save task panicked: {}", e),
+                Ok(_) => info!("[KEY_ACTOR] Configuration saved successfully to file"),
+                Err(e) => error!("[KEY_ACTOR] Failed to save configuration to file: {}", e),
             }
         });
     }
@@ -70,11 +72,29 @@ impl KeyActor {
 
     /// Collects (returns) a key back to the pool
     fn collect(state: &mut KeyActorState, key: KeyStatus) {
-        let Some(pos) = state.iter().position(|k| *k == key) else {
-            error!("Key not found in valid keys");
+        let Some(pos) = state.iter().position(|k| k.key == key.key) else {
+            error!("[KEY_ACTOR] Key not found in valid keys: {}", key.key.ellipse());
             return;
         };
+        
+        let old_cooldown = state[pos].cooldown_until;
+        let cooldown_changed = old_cooldown != key.cooldown_until;
+        
+        info!(
+            "[KEY_ACTOR] Updating key {}: cooldown {:?} -> {:?}",
+            key.key.ellipse(), old_cooldown, key.cooldown_until
+        );
+        
+        // 更新状态
         state[pos] = key;
+        
+        // 如果cooldown状态变化，保存配置
+        if cooldown_changed {
+            info!("[KEY_ACTOR] Cooldown changed, saving configuration");
+            Self::save(state);
+        } else {
+            info!("[KEY_ACTOR] No cooldown change, skipping save");
+        }
     }
 
     /// Accepts a new key into the valid collection
@@ -97,12 +117,15 @@ impl KeyActor {
     /// Deletes a key from the collection
     fn delete(state: &mut KeyActorState, key: KeyStatus) -> Result<(), ClewdrError> {
         let size_before = state.len();
+        info!("[KEY_ACTOR] Attempting to delete key: {}", key.key.ellipse());
         state.retain(|k| *k != key);
 
         if state.len() < size_before {
+            info!("[KEY_ACTOR] Key deleted successfully, {} keys remaining", state.len());
             Self::save(state);
             Ok(())
         } else {
+            error!("[KEY_ACTOR] Delete operation failed - key not found: {}", key.key.ellipse());
             Err(ClewdrError::UnexpectedNone {
                 msg: "Delete operation did not find the key",
             })
