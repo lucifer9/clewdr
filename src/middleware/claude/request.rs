@@ -9,11 +9,13 @@ use axum::{
     extract::{FromRequest, Request},
 };
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::CLEWDR_CONFIG,
     error::ClewdrError,
     middleware::claude::{ClaudeApiFormat, ClaudeContext},
+    middleware::get_connection_cancel_token,
     types::{
         claude::{ContentBlock, CreateMessageParams, Message, Role, Thinking, Usage},
         oai::CreateMessageParams as OaiCreateMessageParams,
@@ -34,7 +36,7 @@ use crate::{
 /// - Identifies test messages and handles them appropriately
 /// - Attempts to retrieve responses from cache before processing requests
 /// - Provides format information via the FormatInfo extension
-pub struct ClaudeWebPreprocess(pub CreateMessageParams, pub ClaudeContext);
+pub struct ClaudeWebPreprocess(pub CreateMessageParams, pub ClaudeContext, pub Option<CancellationToken>);
 
 /// Contains information about the API format and streaming status
 ///
@@ -107,6 +109,9 @@ where
     type Rejection = ClewdrError;
 
     async fn from_request(req: Request, _: &S) -> Result<Self, Self::Rejection> {
+        // Extract connection cancel token before processing the request
+        let connection_token = get_connection_cancel_token(&req);
+        
         let NormalizeRequest(body, format) = NormalizeRequest::from_request(req, &()).await?;
 
         // Check for test messages and respond appropriately
@@ -132,7 +137,7 @@ where
             },
         };
 
-        Ok(Self(body, ClaudeContext::Web(info)))
+        Ok(Self(body, ClaudeContext::Web(info), connection_token))
     }
 }
 
@@ -148,7 +153,7 @@ pub struct ClaudeCodeContext {
     pub(super) usage: Usage,
 }
 
-pub struct ClaudeCodePreprocess(pub CreateMessageParams, pub ClaudeContext);
+pub struct ClaudeCodePreprocess(pub CreateMessageParams, pub ClaudeContext, pub Option<CancellationToken>);
 
 impl<S> FromRequest<S> for ClaudeCodePreprocess
 where
@@ -157,6 +162,9 @@ where
     type Rejection = ClewdrError;
 
     async fn from_request(req: Request, _: &S) -> Result<Self, Self::Rejection> {
+        // Extract connection cancel token before processing the request
+        let connection_token = get_connection_cancel_token(&req);
+        
         let NormalizeRequest(mut body, format) = NormalizeRequest::from_request(req, &()).await?;
         // Handle thinking mode by modifying the model name
         if body.model.contains("opus-4-1") && body.temperature.is_some() {
@@ -237,6 +245,6 @@ where
             },
         };
 
-        Ok(Self(body, ClaudeContext::Code(info)))
+        Ok(Self(body, ClaudeContext::Code(info), connection_token))
     }
 }

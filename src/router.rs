@@ -13,7 +13,8 @@ use crate::{
     claude_web_state::ClaudeWebState,
     gemini_state::GeminiState,
     middleware::{
-        RequireAdminAuth, RequireBearerAuth, RequireQueryKeyAuth, RequireXApiKeyAuth,
+        RequireAdminAuth, RequireBearerAuth, RequireQueryKeyAuth, RequireXApiKeyAuth, 
+        connection_monitor,
         claude::{add_usage_info, apply_stop_sequences, check_overloaded, to_oai},
     },
     services::{cookie_actor::CookieActorHandle, key_actor::KeyActorHandle},
@@ -66,6 +67,7 @@ impl RouterBuilder {
             .route_gemini_endpoints()
             .setup_static_serving()
             .with_tower_trace()
+            .with_connection_monitor()
             .with_cors()
     }
 
@@ -220,6 +222,13 @@ impl RouterBuilder {
         let layer = TraceLayer::new_for_http();
 
         self.inner = self.inner.layer(layer);
+        self
+    }
+
+    fn with_connection_monitor(mut self) -> Self {
+        use axum::middleware;
+        
+        self.inner = self.inner.layer(middleware::from_fn(connection_monitor));
         self
     }
 

@@ -17,6 +17,7 @@ panic = "abort"
 
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 wreq = { version = "5", features = [
     "json",
     "stream",

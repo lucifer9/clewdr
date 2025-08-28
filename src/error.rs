@@ -165,6 +165,8 @@ pub enum ClewdrError {
     TimestampError { timestamp: i64 },
     #[snafu(display("Key/Password Invalid"))]
     InvalidAuth,
+    #[snafu(display("Request was cancelled"))]
+    RequestCancelled,
     #[snafu(whatever, display("{}: {}", message, source.as_ref().map_or_else(|| "Unknown error".into(), |e| e.to_string())))]
     Whatever {
         message: String,
@@ -224,6 +226,7 @@ impl IntoResponse for ClewdrError {
                 (StatusCode::BAD_REQUEST, json!(self.to_string()))
             }
             ClewdrError::EmptyChoices => (StatusCode::NO_CONTENT, json!(self.to_string())),
+            ClewdrError::RequestCancelled => (StatusCode::BAD_REQUEST, json!(self.to_string())),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, json!(self.to_string())),
         };
         let err = ClaudeError {

@@ -2,12 +2,14 @@ use axum::{
     Json, RequestExt,
     extract::{FromRequest, Path, Request},
 };
+use tokio_util::sync::CancellationToken;
 
 use super::GeminiArgs;
 use crate::{
     config::CLEWDR_CONFIG,
     error::ClewdrError,
     gemini_state::{GeminiApiFormat, GeminiState},
+    middleware::{get_connection_cancel_token, get_connection_id},
     types::{gemini::request::GeminiRequestBody, oai::CreateMessageParams},
 };
 
@@ -20,12 +22,16 @@ pub struct GeminiContext {
     pub api_format: GeminiApiFormat,
 }
 
-pub struct GeminiPreprocess(pub GeminiRequestBody, pub GeminiContext);
+pub struct GeminiPreprocess(pub GeminiRequestBody, pub GeminiContext, pub Option<CancellationToken>, pub Option<crate::connection::ConnectionId>);
 
 impl FromRequest<GeminiState> for GeminiPreprocess {
     type Rejection = ClewdrError;
 
     async fn from_request(mut req: Request, state: &GeminiState) -> Result<Self, Self::Rejection> {
+        // Extract connection cancel token before processing the request
+        let connection_token = get_connection_cancel_token(&req);
+        let connection_id = get_connection_id(&req);
+        
         let Path(path) = req.extract_parts::<Path<String>>().await?;
         let vertex = req.uri().to_string().contains("vertex");
         if vertex && !CLEWDR_CONFIG.load().vertex.validate() {
@@ -58,16 +64,20 @@ impl FromRequest<GeminiState> for GeminiPreprocess {
         body.safety_off();
         let mut state = state.clone();
         state.update_from_ctx(&ctx);
-        Ok(GeminiPreprocess(body, ctx))
+        Ok(GeminiPreprocess(body, ctx, connection_token, connection_id))
     }
 }
 
-pub struct GeminiOaiPreprocess(pub CreateMessageParams, pub GeminiContext);
+pub struct GeminiOaiPreprocess(pub CreateMessageParams, pub GeminiContext, pub Option<CancellationToken>, pub Option<crate::connection::ConnectionId>);
 
 impl FromRequest<GeminiState> for GeminiOaiPreprocess {
     type Rejection = ClewdrError;
 
     async fn from_request(req: Request, state: &GeminiState) -> Result<Self, Self::Rejection> {
+        // Extract connection cancel token before processing the request
+        let connection_token = get_connection_cancel_token(&req);
+        let connection_id = get_connection_id(&req);
+        
         let vertex = req.uri().to_string().contains("vertex");
         if vertex && !CLEWDR_CONFIG.load().vertex.validate() {
             return Err(ClewdrError::BadRequest {
@@ -90,6 +100,6 @@ impl FromRequest<GeminiState> for GeminiOaiPreprocess {
         };
         let mut state = state.clone();
         state.update_from_ctx(&ctx);
-        Ok(GeminiOaiPreprocess(body, ctx))
+        Ok(GeminiOaiPreprocess(body, ctx, connection_token, connection_id))
     }
 }

@@ -10,6 +10,7 @@ use serde_json::Value;
 use snafu::ResultExt;
 use strum::Display;
 use tokio::spawn;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use wreq::{Client, ClientBuilder, header::AUTHORIZATION};
 use yup_oauth2::{CustomHyperClientBuilder, ServiceAccountAuthenticator, ServiceAccountKey};
@@ -293,7 +294,11 @@ impl GeminiState {
         Ok(res)
     }
 
-    pub async fn try_chat(&mut self, p: impl Serialize + Clone) -> Result<Response, ClewdrError> {
+    pub async fn try_chat(
+        &mut self, 
+        p: impl Serialize + Clone,
+        cancellation_token: CancellationToken,
+    ) -> Result<Response, ClewdrError> {
         let mut err = None;
         let max_retries = CLEWDR_CONFIG.load().max_retries;
         info!(
@@ -305,28 +310,46 @@ impl GeminiState {
             if i > 0 {
                 info!("[RETRY] attempt: {}", i.to_string().green());
             }
-            let mut state = self.to_owned();
+            let state = self.to_owned();
             let p = p.to_owned();
 
-            match state.send_chat(p).await {
-                Ok(resp) => match state.check_empty_choices(resp).await {
-                    Ok(resp) => {
-                        // 成功处理请求，更新密钥状态
-                        spawn(async move {
-                            state.report_success().await.unwrap_or_else(|e| {
-                                error!("Failed to report success: {}", e);
+            let send_chat_task = async {
+                let mut temp_state = self.to_owned();
+                temp_state.send_chat(p).await
+            };
+
+            let result = tokio::select! {
+                res = send_chat_task => res,
+                _ = cancellation_token.cancelled() => {
+                    info!("[CANCELLED] Gemini request cancelled during send_chat");
+                    return Err(ClewdrError::RequestCancelled);
+                }
+            };
+
+            match result {
+                Ok(resp) => {
+                    let check_state = self.to_owned();
+                    match check_state.check_empty_choices(resp).await {
+                        Ok(resp) => {
+                            // 成功处理请求，更新密钥状态
+                            spawn(async move {
+                                state.report_success().await.unwrap_or_else(|e| {
+                                    error!("Failed to report success: {}", e);
+                                });
                             });
-                        });
-                        return Ok(resp);
-                    }
-                    Err(e) => {
-                        error!("Failed to check empty choices: {}", e);
-                        err = Some(e);
-                        continue;
+                            return Ok(resp);
+                        }
+                        Err(e) => {
+                            error!("Failed to check empty choices: {}", e);
+                            err = Some(e);
+                            continue;
+                        }
                     }
                 },
                 Err(e) => {
-                    if let Some(key) = state.key.to_owned() {
+                    // Create a new state instance for error handling
+                    let state_for_error = self.to_owned();
+                    if let Some(key) = state_for_error.key.to_owned() {
                         error!("[{}] {}", key.key.ellipse().green(), e);
                     } else {
                         error!("{}", e);
@@ -336,21 +359,23 @@ impl GeminiState {
                             match code.as_u16() {
                                 400 => {
                                     spawn(async move {
-                                        state.report_400().await.unwrap_or_else(|e| {
+                                        state_for_error.report_400().await.unwrap_or_else(|e| {
                                             error!("Failed to report 400: {}", e);
                                         });
                                     });
                                 }
                                 403 => {
+                                    let state_403 = self.to_owned();
                                     spawn(async move {
-                                        state.report_403().await.unwrap_or_else(|e| {
+                                        state_403.report_403().await.unwrap_or_else(|e| {
                                             error!("Failed to report 403: {}", e);
                                         });
                                     });
                                 }
                                 429 => {
+                                    let state_429 = self.to_owned();
                                     spawn(async move {
-                                        state.report_429().await.unwrap_or_else(|e| {
+                                        state_429.report_429().await.unwrap_or_else(|e| {
                                             error!("Failed to report 429: {}", e);
                                         });
                                     });

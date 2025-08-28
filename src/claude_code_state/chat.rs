@@ -1,5 +1,6 @@
 use colored::Colorize;
 use snafu::ResultExt;
+use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, info};
 
 use crate::{
@@ -26,12 +27,14 @@ impl ClaudeCodeState {
     ///
     /// # Arguments
     /// * `p` - The client request body containing messages and configuration
+    /// * `cancellation_token` - Token to cancel the operation when signalled
     ///
     /// # Returns
     /// * `Result<axum::response::Response, ClewdrError>` - Formatted response or error
     pub async fn try_chat(
         &mut self,
         p: CreateMessageParams,
+        cancellation_token: CancellationToken,
     ) -> Result<axum::response::Response, ClewdrError> {
         for i in 0..CLEWDR_CONFIG.load().max_retries + 1 {
             if i > 0 {
@@ -73,7 +76,16 @@ impl ClaudeCodeState {
                 "claude_code",
                 "cookie" = cookie.cookie.ellipse()
             ));
-            match retry.await {
+
+            let result = tokio::select! {
+                res = retry => res,
+                _ = cancellation_token.cancelled() => {
+                    info!("[CANCELLED] Claude Code request cancelled");
+                    return Err(ClewdrError::RequestCancelled);
+                }
+            };
+
+            match result {
                 Ok(res) => {
                     return Ok(res);
                 }

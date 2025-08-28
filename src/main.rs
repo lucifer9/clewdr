@@ -1,5 +1,5 @@
 use clewdr::{
-    self, FIG, IS_DEBUG, VERSION_INFO,
+    self, FIG, IS_DEBUG, VERSION_INFO, SHUTDOWN_TOKEN, CONNECTION_REGISTRY,
     config::{CLEWDR_CONFIG, CONFIG_PATH, LOG_DIR},
     error::ClewdrError,
 };
@@ -118,9 +118,37 @@ async fn main() -> Result<(), ClewdrError> {
     // serve the application
     Ok(axum::serve(listener, router)
         .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("Failed to install Ctrl-C handler");
+            let ctrl_c = async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("Failed to install Ctrl-C handler");
+                println!("Received Ctrl+C, shutting down...");
+                SHUTDOWN_TOKEN.cancel();
+                
+                // Immediately close all active client connections
+                CONNECTION_REGISTRY.cancel_all_connections().await;
+            };
+
+            let terminate = async {
+                #[cfg(unix)]
+                {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let mut stream = signal(SignalKind::terminate()).expect("Failed to install signal handler");
+                    stream.recv().await;
+                    println!("Received SIGTERM, shutting down...");
+                    SHUTDOWN_TOKEN.cancel();
+                    
+                    // Immediately close all active client connections
+                    CONNECTION_REGISTRY.cancel_all_connections().await;
+                }
+                #[cfg(not(unix))]
+                futures::future::pending::<()>().await;
+            };
+
+            tokio::select! {
+                _ = ctrl_c => {},
+                _ = terminate => {},
+            }
         })
         .await?)
 }

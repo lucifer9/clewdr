@@ -11,9 +11,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{select, time::interval};
-use tracing::info;
+use tracing::{info, debug};
 
 use crate::{
+    SHUTDOWN_TOKEN,
     config::CLEWDR_CONFIG,
     error::ClewdrError,
     gemini_state::{GeminiApiFormat, GeminiState},
@@ -218,6 +219,8 @@ fn fake_streaming_handler<T>(
     state: GeminiState,
     body: T,
     ctx: GeminiContext,
+    cancellation_token: tokio_util::sync::CancellationToken,
+    conn_id: Option<crate::connection::ConnectionId>,
 ) -> impl Stream<Item = Result<Bytes, axum::Error>>
 where
     T: Serialize + Clone + Send + 'static,
@@ -253,7 +256,8 @@ where
         // Spawn independent keep-alive task that runs completely separately from API calls
         let keep_alive_handle = {
             let tx = keep_alive_tx.clone();
-            let api_format = ctx_for_response.clone(); // Use cloned api_format
+            let api_format = ctx_for_response.clone();
+            let cancellation_token = cancellation_token.clone();
 
             tokio::spawn(async move {
                 let mut interval = interval(keep_alive_interval);
@@ -261,59 +265,79 @@ where
 
                 // Send initial keep-alive immediately
                 let initial_msg = Bytes::from(create_keep_alive_chunk(&api_format));
+                debug!("[FAKE_STREAMING] Generated initial keep-alive chunk ({:?} format, {} bytes)", api_format, initial_msg.len());
                 if tx.send(initial_msg).await.is_err() {
+                    debug!("[FAKE_STREAMING] Initial channel send failed, receiver dropped");
                     return; // Receiver dropped
                 }
+                debug!("[FAKE_STREAMING] Initial keep-alive message sent to internal channel successfully");
 
                 loop {
-                    interval.tick().await;
-                    let keep_alive = Bytes::from(create_keep_alive_chunk(&api_format));
-
-                    if tx.send(keep_alive).await.is_err() {
-                        break; // Receiver dropped, task should stop
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let keep_alive = Bytes::from(create_keep_alive_chunk(&api_format));
+                            debug!("[FAKE_STREAMING] Generated keep-alive chunk ({:?} format, {} bytes)", api_format, keep_alive.len());
+                            if tx.send(keep_alive).await.is_err() {
+                                debug!("[FAKE_STREAMING] Channel send failed, receiver dropped");
+                                break; // Receiver dropped, task should stop
+                            }
+                            debug!("[FAKE_STREAMING] Keep-alive message sent to internal channel successfully");
+                        }
+                        _ = cancellation_token.cancelled() => {
+                            info!("[FAKE_STREAMING] Keep-alive task cancelled");
+                            break;
+                        }
                     }
                 }
             })
         };
 
-        // Spawn connection monitoring task
-        let connection_start = std::time::Instant::now();
-        let connection_monitor_handle = tokio::spawn(async move {
-            let start = connection_start;
-            let mut interval = tokio::time::interval(Duration::from_secs(10));
-
-            loop {
-                interval.tick().await;
-                let elapsed = start.elapsed().as_secs();
-                info!("[CONNECTION_MONITOR] Connection alive for {} seconds", elapsed);
-
-                if elapsed >= 150 {
-                    break;
+        // Remove the connection monitor task - it's not needed
+        
+        // Create API future directly (no spawn to allow cancellation)
+        let cancellation_token_for_api = cancellation_token.clone();
+        let api_future = async move {
+            tokio::select! {
+                result = non_streaming_state.try_chat(body, cancellation_token_for_api.clone()) => result,
+                _ = cancellation_token_for_api.cancelled() => {
+                    info!("[FAKE_STREAMING] API task cancelled");
+                    Err(ClewdrError::RequestCancelled)
                 }
             }
-        });
+        };
 
-        // Spawn API call in separate task
-        let mut api_task = tokio::spawn(async move {
-            non_streaming_state.try_chat(body).await
-        });
-
-        // Main event loop - now only handles keep-alive messages and API completion
+        // Main event loop - handles keep-alive messages, API completion, and cancellation
+        let mut api_future = Box::pin(api_future);
         loop {
             select! {
                 biased; // Ensure fair scheduling
 
-                // API task completion
-                result = &mut api_task => {
+                // Cancellation signal
+                _ = cancellation_token.cancelled() => {
+                    info!("[FAKE_STREAMING] Main loop cancelled");
+                    
+                    // Clean up the connection on cancellation
+                    if let Some(conn_id) = conn_id {
+                        use crate::CONNECTION_REGISTRY;
+                        CONNECTION_REGISTRY.cancel_connection(conn_id).await;
+                        debug!("[FAKE_STREAMING] Connection {} cleaned up after cancellation", conn_id);
+                    }
+                    
                     // Stop keep-alive task by dropping the sender
                     drop(keep_alive_tx);
                     keep_alive_handle.abort();
-                    connection_monitor_handle.abort();
+                    yield Err(axum::Error::new("Request cancelled"));
+                    break;
+                }
 
-                    let _elapsed_secs = connection_start.elapsed().as_secs();
+                // API future completion
+                result = &mut api_future => {
+                    // Stop keep-alive task by dropping the sender
+                    drop(keep_alive_tx);
+                    keep_alive_handle.abort();
 
                     match result {
-                        Ok(Ok(response)) => {
+                        Ok(response) => {
                             // Convert the complete response to streaming format
                             // Create a context for response conversion with cloned api_format
                             let response_ctx = GeminiContext {
@@ -329,6 +353,10 @@ where
                                 Ok(chunk_stream) => {
                                     let mut chunk_stream = chunk_stream;
                                     while let Some(chunk) = chunk_stream.next().await {
+                                        match &chunk {
+                                            Ok(bytes) => debug!("[FAKE_STREAMING] Sending API response chunk to client ({} bytes)", bytes.len()),
+                                            Err(_) => debug!("[FAKE_STREAMING] Sending API error chunk to client"),
+                                        }
                                         yield chunk;
                                     }
                                 }
@@ -337,7 +365,7 @@ where
                                 }
                             }
                         }
-                        Ok(Err(e)) => {
+                        Err(e) => {
                             // Send error in streaming format
                             let error_ctx = GeminiContext {
                                 api_format: ctx_for_response,
@@ -350,22 +378,6 @@ where
                             let error_chunk = create_error_chunk(&e, &error_ctx);
                             yield Ok(Bytes::from(error_chunk));
                         }
-                        Err(_join_error) => {
-                            // Task was cancelled or panicked
-                            let error = ClewdrError::UnexpectedNone {
-                                msg: "API call task failed"
-                            };
-                            let error_ctx = GeminiContext {
-                                api_format: ctx_for_response,
-                                stream: ctx.stream,
-                                model: ctx.model,
-                                vertex: ctx.vertex,
-                                path: ctx.path,
-                                query: ctx.query,
-                            };
-                            let error_chunk = create_error_chunk(&error, &error_ctx);
-                            yield Ok(Bytes::from(error_chunk));
-                        }
                     }
                     break;
                 }
@@ -374,9 +386,14 @@ where
                 keep_alive_msg = keep_alive_rx.recv() => {
                     match keep_alive_msg {
                         Some(msg) => {
+                            debug!("[FAKE_STREAMING] Received keep-alive from channel ({} bytes)", msg.len());
+                            debug!("[FAKE_STREAMING] Sending keep-alive to client: {}", 
+                                   String::from_utf8_lossy(&msg[..std::cmp::min(100, msg.len())]));
                             yield Ok(msg);
+                            debug!("[FAKE_STREAMING] Keep-alive successfully sent to client");
                         }
                         None => {
+                            debug!("[FAKE_STREAMING] Keep-alive channel closed");
                             // Keep-alive task ended (shouldn't happen before API completes)
                         }
                     }
@@ -385,6 +402,14 @@ where
         }
 
         info!("[FAKE_STREAMING] Handler completed");
+        
+        // Clean up the connection after streaming completes
+        if let Some(conn_id) = conn_id {
+            use crate::CONNECTION_REGISTRY;
+            CONNECTION_REGISTRY.cancel_connection(conn_id).await;
+            debug!("[FAKE_STREAMING] Connection {} cleaned up after stream completion", conn_id);
+        }
+        
         // Ensure the API task is cleaned up
         // Note: api_task is consumed in the select! above, so we don't need to abort it here
     }
@@ -395,6 +420,8 @@ async fn handle_gemini_request<T: Serialize + Clone + Send + 'static>(
     mut state: GeminiState,
     body: T,
     ctx: GeminiContext,
+    conn_token: Option<tokio_util::sync::CancellationToken>,
+    conn_id: Option<crate::connection::ConnectionId>,
 ) -> Result<Response, ClewdrError> {
     state.update_from_ctx(&ctx);
     info!(
@@ -410,10 +437,37 @@ async fn handle_gemini_request<T: Serialize + Clone + Send + 'static>(
     );
 
     let config = CLEWDR_CONFIG.load();
+    
+    // Create a child token for this request from the global shutdown token
+    let global_request_token = SHUTDOWN_TOKEN.child_token();
+    
+    // Create a composite token that responds to both global shutdown and connection disconnection
+    let composite_token = if let Some(conn_token) = conn_token {
+        let composite = global_request_token.child_token();
+        
+        // Create a task that cancels the composite token if either parent is cancelled
+        let composite_clone = composite.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = global_request_token.cancelled() => {
+                    info!("[CANCEL] Global shutdown signal received");
+                    composite_clone.cancel();
+                }
+                _ = conn_token.cancelled() => {
+                    info!("[CANCEL] Connection disconnect signal received");
+                    composite_clone.cancel();
+                }
+            }
+        });
+        
+        composite
+    } else {
+        global_request_token
+    };
 
     // Check if we should use fake streaming
     if ctx.stream && config.fake_streaming {
-        let stream = fake_streaming_handler(state, body, ctx);
+        let stream = fake_streaming_handler(state, body, ctx, composite_token, conn_id);
         let res = Response::builder()
             .header(CONTENT_TYPE, "text/event-stream")
             .header("Cache-Control", "no-cache")
@@ -422,27 +476,39 @@ async fn handle_gemini_request<T: Serialize + Clone + Send + 'static>(
         return Ok(res);
     }
 
-    // For non-streaming requests without fake streaming, return directly
+    // For non-streaming requests without fake streaming, return directly  
     if !ctx.stream {
-        let res = state.try_chat(body).await?;
+        let res = tokio::select! {
+            result = state.try_chat(body, composite_token.clone()) => result?,
+            _ = composite_token.cancelled() => {
+                info!("[CANCELLED] Gemini request cancelled by signal");
+                return Err(ClewdrError::RequestCancelled);
+            }
+        };
         return Ok(res);
     }
 
     // For real streaming requests, proceed as before
-    let res = state.try_chat(body).await?;
+    let res = tokio::select! {
+        result = state.try_chat(body, composite_token.clone()) => result?,
+        _ = composite_token.cancelled() => {
+            info!("[CANCELLED] Gemini streaming request cancelled by signal");
+            return Err(ClewdrError::RequestCancelled);
+        }
+    };
     Ok(res)
 }
 
 pub async fn api_post_gemini(
     State(state): State<GeminiState>,
-    GeminiPreprocess(body, ctx): GeminiPreprocess,
+    GeminiPreprocess(body, ctx, conn_token, conn_id): GeminiPreprocess,
 ) -> Result<Response, ClewdrError> {
-    handle_gemini_request(state, body, ctx).await
+    handle_gemini_request(state, body, ctx, conn_token, conn_id).await
 }
 
 pub async fn api_post_gemini_oai(
     State(state): State<GeminiState>,
-    GeminiOaiPreprocess(body, ctx): GeminiOaiPreprocess,
+    GeminiOaiPreprocess(body, ctx, conn_token, conn_id): GeminiOaiPreprocess,
 ) -> Result<Response, ClewdrError> {
-    handle_gemini_request(state, body, ctx).await
+    handle_gemini_request(state, body, ctx, conn_token, conn_id).await
 }

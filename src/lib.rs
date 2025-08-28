@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::LazyLock};
 
 use clap::Parser;
 use colored::Colorize;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::CLEWDR_CONFIG;
 
@@ -9,6 +10,7 @@ pub mod api;
 pub mod claude_code_state;
 pub mod claude_web_state;
 pub mod config;
+pub mod connection;
 pub mod error;
 pub mod gemini_state;
 pub mod middleware;
@@ -16,6 +18,12 @@ pub mod router;
 pub mod services;
 pub mod types;
 pub mod utils;
+
+/// Global cancellation token for graceful shutdown
+pub static SHUTDOWN_TOKEN: LazyLock<CancellationToken> = LazyLock::new(CancellationToken::new);
+
+/// Re-export connection registry for use in main.rs and other modules
+pub use connection::CONNECTION_REGISTRY;
 
 pub const IS_DEBUG: bool = cfg!(debug_assertions);
 pub static IS_DEV: LazyLock<bool> = LazyLock::new(|| std::env::var("CARGO_MANIFEST_DIR").is_ok());

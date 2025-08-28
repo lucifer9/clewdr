@@ -2,6 +2,7 @@ use colored::Colorize;
 use futures::TryFutureExt;
 use serde_json::json;
 use snafu::ResultExt;
+use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 use wreq::{Method, Response, header::ACCEPT};
 
@@ -29,12 +30,14 @@ impl ClaudeWebState {
     ///
     /// # Arguments
     /// * `p` - The client request body containing messages and configuration
+    /// * `cancellation_token` - Token to cancel the operation when signalled
     ///
     /// # Returns
     /// * `Result<axum::response::Response, ClewdrError>` - Formatted response or error
     pub async fn try_chat(
         &mut self,
         p: CreateMessageParams,
+        cancellation_token: CancellationToken,
     ) -> Result<axum::response::Response, ClewdrError> {
         for i in 0..CLEWDR_CONFIG.load().max_retries + 1 {
             if i > 0 {
@@ -50,7 +53,15 @@ impl ClaudeWebState {
                 .and_then(async |r| self.transform_response(r).await)
                 .instrument(info_span!("claude_web", "cookie" = cookie.cookie.ellipse()));
 
-            match transform_res.await {
+            let result = tokio::select! {
+                res = transform_res => res,
+                _ = cancellation_token.cancelled() => {
+                    info!("[CANCELLED] Claude Web request cancelled");
+                    return Err(ClewdrError::RequestCancelled);
+                }
+            };
+
+            match result {
                 Ok(b) => {
                     if let Err(e) = state.clean_chat().await {
                         warn!("Failed to clean chat: {}", e);
