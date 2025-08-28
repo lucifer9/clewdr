@@ -82,9 +82,10 @@ const KeyVisualization: React.FC = () => {
   const totalKeys = keyStatus.valid.length;
 
   // Filter keys with cooldown and sort by cooldown time remaining
-  const keysWithErrors = keyStatus.valid.filter(status => 
-    status.cooldown_until && Date.now() / 1000 < status.cooldown_until
-  );
+  const keysWithErrors = keyStatus.valid.filter(status => {
+    const hasValidCooldown = status.cooldown_until && Date.now() / 1000 < status.cooldown_until;
+    return hasValidCooldown;
+  });
 
   const sortedKeys = keysWithErrors
     .slice()
