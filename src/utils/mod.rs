@@ -41,17 +41,7 @@ pub fn print_out_text(text: String, file_name: &str) {
     }
     let file_name = LOG_DIR.join(file_name);
     spawn(async move {
-        let Ok(mut file) = tokio::fs::File::options()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&file_name)
-            .await
-        else {
-            error!("Failed to open file: {}", file_name.display());
-            return;
-        };
-        if let Err(e) = file.write_all(text.as_bytes()).await {
+        if let Err(e) = tokio::fs::write(file_name, text).await {
             error!("Failed to write to file: {}\n", e);
         }
     });
@@ -76,7 +66,7 @@ pub fn forward_response(in_: wreq::Response) -> Result<http::Response<Body>, Cle
     Ok(res.body(Body::from_stream(stream))?)
 }
 
-/// Extract all tags that appear at the top level of the content  
+/// Extract all tags that appear at the top level of the content
 /// Uses simplified lenient parsing: any tag that starts the document or appears after balanced content
 /// Returns Ok(tags) if top-level tags can be identified, Err(message) for critical issues
 fn extract_top_level_tags(content: &str) -> Result<Vec<String>, String> {
@@ -85,7 +75,7 @@ fn extract_top_level_tags(content: &str) -> Result<Vec<String>, String> {
     let chars: Vec<char> = content.chars().collect();
     let mut i = 0;
     let mut depth: usize = 0;
-    
+
     while i < chars.len() {
         if chars[i] == '<' {
             let _start_pos = i;
@@ -93,20 +83,20 @@ fn extract_top_level_tags(content: &str) -> Result<Vec<String>, String> {
             if i >= chars.len() {
                 break;
             }
-            
+
             // Check for closing tag
             let is_closing = chars[i] == '/';
             if is_closing {
                 i += 1; // Skip '/'
             }
-            
+
             // Extract tag name
             let mut tag_name = String::new();
             while i < chars.len() && chars[i] != '>' && !chars[i].is_whitespace() && chars[i] != '/' {
                 tag_name.push(chars[i]);
                 i += 1;
             }
-            
+
             // Check for self-closing tag
             let mut is_self_closing = false;
             while i < chars.len() && chars[i] != '>' {
@@ -118,12 +108,12 @@ fn extract_top_level_tags(content: &str) -> Result<Vec<String>, String> {
             if i < chars.len() {
                 i += 1; // Skip '>'
             }
-            
+
             // Skip comments and other special syntax
             if tag_name.starts_with('!') || tag_name.starts_with('?') {
                 continue;
             }
-            
+
             if is_self_closing {
                 // Self-closing tag - it's top-level if depth is currently 0
                 if depth == 0 {
@@ -165,7 +155,7 @@ fn extract_top_level_tags(content: &str) -> Result<Vec<String>, String> {
             i += 1;
         }
     }
-    
+
     // Check if any top-level tags are left unclosed
     if !top_level_stack.is_empty() {
         return Err(format!(
@@ -173,7 +163,7 @@ fn extract_top_level_tags(content: &str) -> Result<Vec<String>, String> {
             top_level_stack.join(", ")
         ));
     }
-    
+
     Ok(top_level_tags)
 }
 
@@ -238,19 +228,19 @@ mod tests {
     fn test_validate_required_tags_basic_functionality() {
         // Single required tag - present and closed
         assert!(validate_required_tags("<assess>yes</assess>", "assess").is_ok());
-        
+
         // Multiple required tags - all present and closed
         assert!(validate_required_tags(
             "<assess>yes</assess><thinking>process</thinking>",
             "assess,thinking"
         ).is_ok());
-        
+
         // Self-closing tag
         assert!(validate_required_tags("<details/>", "details").is_ok());
-        
+
         // Mixed regular and self-closing
         assert!(validate_required_tags(
-            "<assess>yes</assess><details/>", 
+            "<assess>yes</assess><details/>",
             "assess,details"
         ).is_ok());
     }
@@ -259,16 +249,16 @@ mod tests {
     fn test_validate_required_tags_missing_tags() {
         // No tags present
         assert!(validate_required_tags("no tags here", "assess").is_err());
-        
+
         // Some but not all required tags
         assert!(validate_required_tags(
-            "<assess>yes</assess>", 
+            "<assess>yes</assess>",
             "assess,thinking"
         ).is_err());
-        
+
         // Wrong tags present
         assert!(validate_required_tags(
-            "<thinking>process</thinking>", 
+            "<thinking>process</thinking>",
             "assess"
         ).is_err());
     }
@@ -277,13 +267,13 @@ mod tests {
     fn test_validate_required_tags_unclosed_tags() {
         // Unclosed required tag
         assert!(validate_required_tags("<assess>incomplete", "assess").is_err());
-        
+
         // Some closed, some unclosed
         assert!(validate_required_tags(
             "<assess>yes</assess><thinking>incomplete",
             "assess,thinking"
         ).is_err());
-        
+
         // Mismatched tags
         assert!(validate_required_tags(
             "<assess><thinking></assess></thinking>",
@@ -298,13 +288,13 @@ mod tests {
             "<assess><thinking>nested</thinking></assess>",
             "assess"
         ).is_ok());
-        
+
         // Both tags at top level
         assert!(validate_required_tags(
             "<assess></assess><thinking></thinking>",
             "assess,thinking"
         ).is_ok());
-        
+
         // Required tag nested (should fail)
         assert!(validate_required_tags(
             "<other><assess>nested</assess></other>",
@@ -319,19 +309,19 @@ mod tests {
             "<thinking>content</thinking>",
             "thinking"
         ).is_ok());
-        
+
         // think should not match thinking
         assert!(validate_required_tags(
             "<thinking>content</thinking>",
             "think"
         ).is_err());
-        
+
         // think should match think exactly
         assert!(validate_required_tags(
             "<think>content</think>",
             "think"
         ).is_ok());
-        
+
         // Both present
         assert!(validate_required_tags(
             "<think>a</think><thinking>b</thinking>",
@@ -346,7 +336,7 @@ mod tests {
             "<ASSESS>content</ASSESS>",
             "ASSESS"
         ).is_ok());
-        
+
         // Different cases should not match
         assert!(validate_required_tags(
             "<assess>content</assess>",
@@ -358,10 +348,10 @@ mod tests {
     fn test_validate_required_tags_truncation_detection() {
         // Incomplete opening tag
         assert!(validate_required_tags("<asse", "assess").is_err());
-        
-        // Incomplete closing tag  
+
+        // Incomplete closing tag
         assert!(validate_required_tags("<assess>content</asse", "assess").is_err());
-        
+
         // Dangling less-than (should not cause false positives)
         assert!(validate_required_tags("1 < 2 and 3 > 1", "assess").is_err());
     }
@@ -374,21 +364,21 @@ mod tests {
         let error = result.unwrap_err();
         println!("Unclosed tag error: {}", error);
         assert!(error.contains("Unclosed top-level tags: thinking"));
-        
-        // Test missing tag error message  
+
+        // Test missing tag error message
         let result = validate_required_tags("<other>content</other>", "thinking");
         assert!(result.is_err());
         let error = result.unwrap_err();
         println!("Missing tag error: {}", error);
         assert!(error.contains("Required tag 'thinking' not found at top level"));
-        
+
         // Test mismatched tags error message
         let result = validate_required_tags("<thinking><assess></thinking></assess>", "thinking,assess");
         assert!(result.is_err());
         let error = result.unwrap_err();
         println!("Mismatched tag error: {}", error);
         // Just check if it's an error, don't check specific message since this one is complex
-        
+
         // Test valid case
         let result = validate_required_tags("<thinking>content</thinking>", "thinking");
         assert!(result.is_ok());
@@ -397,7 +387,7 @@ mod tests {
     #[test]
     fn test_lenient_nested_parsing() {
         // Test that nested tag problems don't affect top-level validation
-        
+
         // Debug the parsing process
         println!("Testing case 1: '<thinking>content <broken>unclosed nested</thinking>'");
         let test_content = "<thinking>content <broken>unclosed nested</thinking>";
@@ -405,7 +395,7 @@ mod tests {
             Ok(tags) => println!("Extracted tags: {:?}", tags),
             Err(e) => println!("Extraction error: {}", e),
         }
-        
+
         let result = validate_required_tags(
             test_content,
             "thinking"
@@ -414,21 +404,21 @@ mod tests {
             println!("Case 1 failed: {}", e);
         }
         assert!(result.is_ok()); // Should pass because thinking is properly closed at top level
-        
-        // Case 2: Nested mismatched tags should not affect top-level validation  
+
+        // Case 2: Nested mismatched tags should not affect top-level validation
         let result = validate_required_tags(
-            "<thinking><part><other></part></other>completed</thinking>", 
+            "<thinking><part><other></part></other>completed</thinking>",
             "thinking"
         );
         assert!(result.is_ok()); // Should pass because thinking is properly closed
-        
-        // Case 3: Multiple top-level tags with nested problems - corrected case  
+
+        // Case 3: Multiple top-level tags with nested problems - corrected case
         let result = validate_required_tags(
             "<thinking><broken>unclosed</thinking><content>good content</content>",
             "thinking,content"
         );
         assert!(result.is_ok()); // Should pass because both top-level tags are closed
-        
+
         // Case 4: Top-level tag actually unclosed should still fail
         let result = validate_required_tags(
             "<thinking>content <nested>fine</nested>", // thinking not closed
@@ -437,11 +427,11 @@ mod tests {
         assert!(result.is_err()); // Should fail because thinking is not closed
         let error = result.unwrap_err();
         assert!(error.contains("Unclosed top-level tags: thinking"));
-        
+
         // Case 5: Top-level tag mismatch should still fail
         let result = validate_required_tags(
             "<thinking>content</content>", // wrong closing tag at top level
-            "thinking"  
+            "thinking"
         );
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -460,30 +450,30 @@ Some more content with <nested_tag>that might be broken
 Main content here
 </content>
 "#;
-        
+
         let result = validate_required_tags(content, "thinking,content");
         assert!(result.is_ok()); // Should pass despite nested issues
-        
+
         // Verify we correctly identify top-level tags
         let top_level_tags = extract_top_level_tags(content).unwrap();
         assert_eq!(top_level_tags, vec!["thinking", "content"]);
     }
 
-    #[test] 
+    #[test]
     fn test_response_files() {
         use std::fs;
-        
+
         // Test response-20250825080921447.txt
         if let Ok(content) = fs::read_to_string("response-20250825080921447.txt") {
             println!("Testing response-20250825080921447.txt:");
-            
+
             // Should pass - thinking tag exists
             match validate_required_tags(&content, "thinking") {
                 Ok(()) => println!("✅ File 1 'thinking' tag: PASSED"),
                 Err(e) => println!("❌ File 1 'thinking' tag: FAILED - {}", e),
             }
-            
-            // Should fail - assess tag does not exist  
+
+            // Should fail - assess tag does not exist
             match validate_required_tags(&content, "assess") {
                 Ok(()) => println!("✅ File 1 'assess' tag: PASSED"),
                 Err(e) => println!("❌ File 1 'assess' tag: FAILED - {}", e),
@@ -491,17 +481,17 @@ Main content here
         } else {
             println!("Could not read response-20250825080921447.txt");
         }
-        
+
         // Test response-20250826055710737.txt
         if let Ok(content) = fs::read_to_string("response-20250826055710737.txt") {
             println!("Testing response-20250826055710737.txt:");
-            
+
             // Should pass - thinking tag exists
             match validate_required_tags(&content, "thinking") {
                 Ok(()) => println!("✅ File 2 'thinking' tag: PASSED"),
                 Err(e) => println!("❌ File 2 'thinking' tag: FAILED - {}", e),
             }
-            
+
             // Should pass - content tag exists
             match validate_required_tags(&content, "content") {
                 Ok(()) => println!("✅ File 2 'content' tag: PASSED"),
