@@ -36,12 +36,12 @@ pub async fn api_claude_web(
         ClaudeApiFormat::OpenAI => ClaudeApiFormat::OpenAI.to_string().yellow(),
     };
     info!(
-        "[REQ] stream: {}, msgs: {}, model: {}, think: {}, format: {}",
-        enabled(stream),
-        p.messages.len().to_string().green(),
-        p.model.green(),
-        enabled(p.thinking.is_some()),
-        format_display
+        stream = %enabled(stream),
+        msgs = %p.messages.len(),
+        model = %p.model,
+        thinking = %enabled(p.thinking.is_some()),
+        format = %format_display,
+        "Claude Web request received"
     );
     let stopwatch = Instant::now();
     
@@ -83,7 +83,7 @@ pub async fn api_claude_web(
     let elapsed = stopwatch.elapsed();
     info!(
         "[FIN] elapsed: {}s",
-        format!("{}", elapsed.as_secs_f32()).green()
+        elapsed.as_secs_f32().to_string().green()
     );
 
     res.map(|r| (Extension(f), r))

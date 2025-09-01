@@ -1,7 +1,6 @@
 use async_stream::stream;
 use axum::{body::Body, extract::State, response::Response};
 use bytes::Bytes;
-use colored::Colorize;
 use futures::{Stream, StreamExt};
 use http::header::CONTENT_TYPE;
 use serde::Serialize;
@@ -425,15 +424,11 @@ async fn handle_gemini_request<T: Serialize + Clone + Send + 'static>(
 ) -> Result<Response, ClewdrError> {
     state.update_from_ctx(&ctx);
     info!(
-        "[REQ] stream: {}, vertex: {}, format: {}, model: {}",
-        enabled(ctx.stream),
-        enabled(ctx.vertex),
-        if ctx.api_format == GeminiApiFormat::Gemini {
-            ctx.api_format.to_string().green()
-        } else {
-            ctx.api_format.to_string().yellow()
-        },
-        ctx.model.green(),
+        stream = %enabled(ctx.stream),
+        vertex = %enabled(ctx.vertex), 
+        format = %ctx.api_format,
+        model = %ctx.model,
+        "Gemini request received"
     );
 
     let config = CLEWDR_CONFIG.load();

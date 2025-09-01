@@ -2,7 +2,6 @@ use std::sync::LazyLock;
 
 use axum::response::Response;
 use chrono::Local;
-use colored::Colorize;
 use http::header::CONTENT_TYPE;
 use hyper_util::client::legacy::connect::HttpConnector;
 use serde::Serialize;
@@ -101,8 +100,8 @@ impl GeminiState {
     pub async fn report_403(&self) -> Result<(), ClewdrError> {
         if let Some(key) = self.key.to_owned() {
             info!(
-                "[KEY_MGMT] Removing 403-failed key from pool: {}",
-                key.key.ellipse().green()
+                key = %key.key.ellipse(),
+                "Removing 403-failed key from pool"
             );
             self.key_handle.delete_key(key).await?;
         }
@@ -112,8 +111,8 @@ impl GeminiState {
     pub async fn report_400(&self) -> Result<(), ClewdrError> {
         if let Some(key) = self.key.to_owned() {
             info!(
-                "[KEY_MGMT] Removing 400-failed key from pool: {}",
-                key.key.ellipse().green()
+                key = %key.key.ellipse(),
+                "Removing 400-failed key from pool"
             );
             self.key_handle.delete_key(key).await?;
         }
@@ -123,14 +122,15 @@ impl GeminiState {
     pub async fn report_429(&self) -> Result<(), ClewdrError> {
         if let Some(mut key) = self.key.to_owned() {
             info!(
-                "[KEY_MGMT] Setting 429 cooldown for key: {}",
-                key.key.ellipse().green()
+                key = %key.key.ellipse(),
+                "Setting 429 cooldown for key"
             );
             let old_cooldown = key.cooldown_until;
             key.set_429_cooldown();
             info!(
-                "[KEY_MGMT] Cooldown updated: {:?} -> {:?}",
-                old_cooldown, key.cooldown_until
+                ?old_cooldown,
+                ?key.cooldown_until,
+                "Cooldown updated"
             );
             match self.key_handle.return_key(key).await {
                 Ok(_) => info!("[KEY_MGMT] Key returned to pool successfully after 429"),
@@ -158,8 +158,8 @@ impl GeminiState {
         let key = match self.key_handle.request().await {
             Ok(key) => {
                 info!(
-                    "[REQUEST_KEY] Key obtained successfully: {}",
-                    key.key.ellipse().green()
+                    key = %key.key.ellipse(),
+                    "Key obtained successfully from pool"
                 );
                 key
             }
@@ -325,7 +325,7 @@ impl GeminiState {
 
         for i in 0..max_retries + 1 {
             if i > 0 {
-                info!("[RETRY] attempt: {}", i.to_string().green());
+                info!(attempt = %i, "Retry attempt");
             }
             let p = p.to_owned();
 
@@ -367,7 +367,7 @@ impl GeminiState {
                 Err(e) => {
                     let error_state = result.0;
                     if let Some(key) = error_state.key.to_owned() {
-                        error!("[{}] {}", key.key.ellipse().green(), e);
+                        error!(key = %key.key.ellipse(), error = %e, "Request failed with key");
                     } else {
                         error!("{}", e);
                     }

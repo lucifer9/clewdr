@@ -119,7 +119,7 @@ impl ClewdrUpdater {
         let update_available = self.compare_versions(current_version, latest_version)?;
 
         if !update_available {
-            info!("Already at the latest version {}", current_version.green());
+            info!(version = %current_version, "Already at the latest version");
             return Ok(false);
         }
         info!(

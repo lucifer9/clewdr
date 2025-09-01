@@ -70,6 +70,9 @@ async fn main() -> Result<(), ClewdrError> {
         fmt::Layer::default()
             .with_writer(std::io::stdout)
             .with_timer(timer.to_owned())
+            .with_ansi(true)
+            .with_target(false)  // 隐藏模块路径，让日志更清晰
+            .with_level(true)    // 显示日志级别
             .with_filter(env_filter),
     );
     let _guard = if !CLEWDR_CONFIG.load().no_fs && CLEWDR_CONFIG.load().log_to_file {
@@ -83,6 +86,9 @@ async fn main() -> Result<(), ClewdrError> {
             fmt::Layer::default()
                 .with_writer(file_writer)
                 .with_timer(timer)
+                .with_ansi(false)  // 文件输出不需要 ANSI 颜色
+                .with_target(false)
+                .with_level(true)
                 .with_filter(filter),
         );
         setup_subscriber(subscriber);

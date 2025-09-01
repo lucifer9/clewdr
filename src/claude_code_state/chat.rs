@@ -38,7 +38,7 @@ impl ClaudeCodeState {
     ) -> Result<axum::response::Response, ClewdrError> {
         for i in 0..CLEWDR_CONFIG.load().max_retries + 1 {
             if i > 0 {
-                info!("[RETRY] attempt: {}", i.to_string().green());
+                info!(attempt = %i, "Retry attempt");
             }
             let mut state = self.to_owned();
             let p = p.to_owned();
