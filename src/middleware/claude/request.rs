@@ -216,16 +216,12 @@ where
 
         let cache_systems = body
             .system
-            .as_mut()
+            .as_ref()
             .expect("System messages should be present")
-            .as_array_mut()
+            .as_array()
             .expect("System messages should be an array")
-            .iter_mut()
-            .filter_map(|s| {
-                // Claude Code does not allow TTLs in system prompts
-                s["cache_control"].as_object_mut()?.remove("ttl");
-                Some(&*s)
-            })
+            .iter()
+            .filter(|s| s["cache_control"].as_object().is_some())
             .collect::<Vec<_>>();
         let system_prompt_hash = (!cache_systems.is_empty()).then(|| {
             let mut hasher = DefaultHasher::new();
