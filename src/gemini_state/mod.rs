@@ -547,7 +547,10 @@ impl GeminiState {
                             && let Some(parts) = content["parts"].as_array()
                         {
                             for part in parts {
-                                if let Some(text) = part["text"].as_str()
+                                // Handle Part enum's JSON structure correctly
+                                // Part::Text serializes to {"text": "..."} so we need to access nested text field
+                                if let Some(text_obj) = part.as_object()
+                                    && let Some(text) = text_obj.get("text").and_then(|t| t.as_str())
                                     && let Err(error) = validate_required_tags(text, &config.required_tags) {
                                         info!(
                                             "[TAG_VALIDATION] Content validation failed: {} - will retry",
