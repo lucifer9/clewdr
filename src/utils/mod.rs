@@ -1,6 +1,6 @@
 use axum::body::Body;
 use colored::{ColoredString, Colorize};
-use tokio::{io::AsyncWriteExt, spawn};
+use tokio::spawn;
 use tracing::{error, info};
 
 use crate::{
