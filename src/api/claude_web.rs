@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use axum::{Extension, extract::State, response::Response};
-use colored::Colorize;
 use tracing::info;
 
 use crate::{
@@ -9,7 +8,7 @@ use crate::{
     claude_web_state::ClaudeWebState,
     error::ClewdrError,
     middleware::claude::{ClaudeApiFormat, ClaudeContext, ClaudeWebPreprocess},
-    utils::{enabled, print_out_json},
+    utils::{enabled_plain, print_out_json},
 };
 /// Axum handler for the API messages
 /// Main API endpoint for handling message requests to Claude
@@ -31,16 +30,12 @@ pub async fn api_claude_web(
     state.api_format = f.api_format();
     state.stream = stream;
     state.usage = f.usage().to_owned();
-    let format_display = match f.api_format() {
-        ClaudeApiFormat::Claude => ClaudeApiFormat::Claude.to_string().green(),
-        ClaudeApiFormat::OpenAI => ClaudeApiFormat::OpenAI.to_string().yellow(),
-    };
     info!(
-        stream = %enabled(stream),
+        stream = %enabled_plain(stream),
         msgs = %p.messages.len(),
         model = %p.model,
-        thinking = %enabled(p.thinking.is_some()),
-        format = %format_display,
+        thinking = %enabled_plain(p.thinking.is_some()),
+        format = %f.api_format(),
         "Claude Web request received"
     );
     let stopwatch = Instant::now();
@@ -81,10 +76,7 @@ pub async fn api_claude_web(
     };
 
     let elapsed = stopwatch.elapsed();
-    info!(
-        "[FIN] elapsed: {}s",
-        elapsed.as_secs_f32().to_string().green()
-    );
+    info!(elapsed_secs = %elapsed.as_secs_f32(), "[FIN] elapsed");
 
     res.map(|r| (Extension(f), r))
 }

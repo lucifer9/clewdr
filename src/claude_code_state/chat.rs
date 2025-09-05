@@ -1,4 +1,3 @@
-use colored::Colorize;
 use snafu::ResultExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, info};
@@ -90,11 +89,11 @@ impl ClaudeCodeState {
                     return Ok(res);
                 }
                 Err(e) => {
-                    error!(
-                        "[{}] {}",
-                        state.cookie.as_ref().unwrap().cookie.ellipse().green(),
-                        e
-                    );
+                    if let Some(cookie) = state.cookie.as_ref() {
+                        error!(cookie = %cookie.cookie.ellipse(), error = %e, "Request failed with cookie");
+                    } else {
+                        error!(error = %e, "Request failed");
+                    }
                     // 429 error
                     if let ClewdrError::InvalidCookie { reason } = e {
                         state.return_cookie(Some(reason.to_owned())).await;

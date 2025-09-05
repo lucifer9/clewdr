@@ -17,6 +17,11 @@ pub fn enabled(flag: bool) -> ColoredString {
     }
 }
 
+/// Plain, non-colored Enabled/Disabled string for logging
+pub fn enabled_plain(flag: bool) -> &'static str {
+    if flag { "Enabled" } else { "Disabled" }
+}
+
 /// Helper function to print out JSON to a file in the log directory
 ///
 /// # Arguments

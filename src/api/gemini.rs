@@ -18,7 +18,7 @@ use crate::{
     error::ClewdrError,
     gemini_state::{GeminiApiFormat, GeminiState},
     middleware::gemini::{GeminiContext, GeminiOaiPreprocess, GeminiPreprocess},
-    utils::enabled,
+    utils::enabled_plain,
 };
 
 // Convert complete response to streaming chunks
@@ -424,8 +424,8 @@ async fn handle_gemini_request<T: Serialize + Clone + Send + 'static>(
 ) -> Result<Response, ClewdrError> {
     state.update_from_ctx(&ctx);
     info!(
-        stream = %enabled(ctx.stream),
-        vertex = %enabled(ctx.vertex), 
+        stream = %enabled_plain(ctx.stream),
+        vertex = %enabled_plain(ctx.vertex), 
         format = %ctx.api_format,
         model = %ctx.model,
         "Gemini request received"

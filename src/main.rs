@@ -4,6 +4,7 @@ use clewdr::{
     error::ClewdrError,
 };
 use colored::Colorize;
+use std::io::IsTerminal;
 #[cfg(feature = "mimalloc")]
 use mimalloc::MiMalloc;
 use tracing::Subscriber;
@@ -67,10 +68,13 @@ async fn main() -> Result<(), ClewdrError> {
         .with_default_directive(filter.into())
         .from_env_lossy();
     let subscriber = Registry::default().with(
-        fmt::Layer::default()
-            .with_writer(std::io::stdout)
-            .with_timer(timer.to_owned())
-            .with_ansi(true)
+        {
+            let stdout_is_tty = std::io::stdout().is_terminal();
+            fmt::Layer::default()
+                .with_writer(std::io::stdout)
+                .with_timer(timer.to_owned())
+                .with_ansi(stdout_is_tty)
+        }
             .with_target(false)  // 隐藏模块路径，让日志更清晰
             .with_level(true)    // 显示日志级别
             .with_filter(env_filter),

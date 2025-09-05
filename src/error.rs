@@ -6,7 +6,6 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use colored::Colorize;
 use oauth2::{RequestTokenError, StandardErrorResponse, basic::BasicErrorResponseType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -143,12 +142,12 @@ pub enum ClewdrError {
         loc: Location,
         source: std::string::FromUtf8Error,
     },
-    #[snafu(display("Http error: code: {}, body: {}", code.to_string().red(), inner.to_string()))]
+    #[snafu(display("Http error: code: {}, body: {}", code.to_string(), inner.to_string()))]
     ClaudeHttpError {
         code: StatusCode,
         inner: ClaudeErrorBody,
     },
-    #[snafu(display("Http error: code: {}, body: {}", code.to_string().red(), serde_json::to_string_pretty(&inner).unwrap_or_default()))]
+    #[snafu(display("Http error: code: {}, body: {}", code.to_string(), serde_json::to_string_pretty(&inner).unwrap_or_default()))]
     GeminiHttpError { code: StatusCode, inner: Value },
     #[snafu(display("Unexpected None: {}", msg))]
     UnexpectedNone { msg: &'static str },

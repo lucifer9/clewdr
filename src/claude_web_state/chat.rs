@@ -1,4 +1,3 @@
-use colored::Colorize;
 use futures::TryFutureExt;
 use serde_json::json;
 use snafu::ResultExt;
@@ -41,7 +40,7 @@ impl ClaudeWebState {
     ) -> Result<axum::response::Response, ClewdrError> {
         for i in 0..CLEWDR_CONFIG.load().max_retries + 1 {
             if i > 0 {
-                info!("[RETRY] attempt: {}", format!("{}", i.to_string().green()));
+                info!(attempt = %i, "[RETRY] attempt");
             }
             let mut state = self.to_owned();
             let p = p.to_owned();
@@ -73,7 +72,7 @@ impl ClaudeWebState {
                     if let Err(e) = state.clean_chat().await {
                         warn!("Failed to clean chat: {}", e);
                     }
-                    error!("{e}");
+                    error!(error = %e, "Request failed");
                     // 429 error
                     if let ClewdrError::InvalidCookie { reason } = e {
                         state.return_cookie(Some(reason.to_owned())).await;

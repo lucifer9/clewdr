@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use axum::{Extension, extract::State, response::Response};
-use colored::Colorize;
 use tracing::info;
 
 use crate::{
@@ -9,7 +8,7 @@ use crate::{
     claude_code_state::ClaudeCodeState,
     error::ClewdrError,
     middleware::claude::{ClaudeApiFormat, ClaudeCodePreprocess, ClaudeContext},
-    utils::{enabled, print_out_json},
+    utils::{enabled_plain, print_out_json},
 };
 
 pub async fn api_claude_code(
@@ -21,16 +20,12 @@ pub async fn api_claude_code(
     state.api_format = f.api_format();
     state.usage = f.usage().to_owned();
     print_out_json(&p, "claude_code_client_req.json");
-    let format_display = match f.api_format() {
-        ClaudeApiFormat::Claude => ClaudeApiFormat::Claude.to_string().green(),
-        ClaudeApiFormat::OpenAI => ClaudeApiFormat::OpenAI.to_string().yellow(),
-    };
     info!(
-        stream = %enabled(state.stream),
+        stream = %enabled_plain(state.stream),
         msgs = %p.messages.len(),
         model = %p.model,
-        thinking = %enabled(p.thinking.is_some()),
-        format = %format_display,
+        thinking = %enabled_plain(p.thinking.is_some()),
+        format = %f.api_format(),
         "Claude Code request received"
     );
     let stopwatch = Instant::now();
@@ -71,10 +66,7 @@ pub async fn api_claude_code(
     };
 
     let elapsed = stopwatch.elapsed();
-    info!(
-        "[FIN] elapsed: {}s",
-        elapsed.as_secs_f32().to_string().green()
-    );
+    info!(elapsed_secs = %elapsed.as_secs_f32(), "[FIN] elapsed");
 
     res.map(|r| (Extension(f), r))
 }
