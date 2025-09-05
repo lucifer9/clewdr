@@ -544,7 +544,7 @@ impl GeminiState {
                             && let Some(candidates) = json_value["candidates"].as_array()
                             && let Some(first_candidate) = candidates.first()
                             && let Some(content) = first_candidate["content"].as_object()
-                            && let Some(parts) = content["parts"].as_array()
+                            && let Some(parts) = content.get("parts").and_then(|v| v.as_array())
                         {
                             for part in parts {
                                 // Handle Part enum's JSON structure correctly

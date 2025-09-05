@@ -62,8 +62,9 @@ impl ClaudeWebState {
         let email = bootstrap["account"]["email_address"]
             .as_str()
             .unwrap_or_default();
-        self.capabilities = boot_acc_info["capabilities"]
-            .as_array()
+        self.capabilities = boot_acc_info
+            .get("capabilities")
+            .and_then(|v| v.as_array())
             .map(|a| {
                 a.iter()
                     .filter_map(|c| c.as_str())

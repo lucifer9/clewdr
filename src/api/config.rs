@@ -31,7 +31,12 @@ pub async fn api_get_config(
         obj.remove("cookie_array");
         obj.remove("wasted_cookie");
         obj.remove("gemini_keys");
-        obj["vertex"]["credential"] = "placeholder".into();
+        if let Some(vertex) = obj.get_mut("vertex").and_then(|v| v.as_object_mut()) {
+            vertex.insert(
+                "credential".to_string(),
+                serde_json::Value::String("placeholder".to_string()),
+            );
+        }
     }
 
     Ok(Json(config_json))

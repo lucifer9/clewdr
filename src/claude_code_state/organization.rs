@@ -41,8 +41,9 @@ impl ClaudeCodeState {
             })
             .and_then(|m| m["organization"].as_object())
             .ok_or(Reason::Null)?;
-        let capabilities = boot_acc_info["capabilities"]
-            .as_array()
+        let capabilities = boot_acc_info
+            .get("capabilities")
+            .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|c| c.as_str()).collect::<Vec<_>>())
             .unwrap_or_default();
         if !capabilities.iter().any(|c| {
@@ -56,8 +57,9 @@ impl ClaudeCodeState {
         let email = bootstrap["account"]["email_address"]
             .as_str()
             .unwrap_or_default();
-        let uuid = boot_acc_info["uuid"]
-            .as_str()
+        let uuid = boot_acc_info
+            .get("uuid")
+            .and_then(|v| v.as_str())
             .ok_or(ClewdrError::UnexpectedNone {
                 msg: "Failed to get organization UUID",
             })?
