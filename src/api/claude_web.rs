@@ -7,7 +7,7 @@ use crate::{
     SHUTDOWN_TOKEN,
     claude_web_state::ClaudeWebState,
     error::ClewdrError,
-    middleware::claude::{ClaudeApiFormat, ClaudeContext, ClaudeWebPreprocess},
+    middleware::claude::{ClaudeContext, ClaudeWebPreprocess},
     utils::{enabled_plain, print_out_json},
 };
 /// Axum handler for the API messages

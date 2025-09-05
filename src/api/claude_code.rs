@@ -7,7 +7,7 @@ use crate::{
     SHUTDOWN_TOKEN,
     claude_code_state::ClaudeCodeState,
     error::ClewdrError,
-    middleware::claude::{ClaudeApiFormat, ClaudeCodePreprocess, ClaudeContext},
+    middleware::claude::{ClaudeCodePreprocess, ClaudeContext},
     utils::{enabled_plain, print_out_json},
 };
 
