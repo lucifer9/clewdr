@@ -95,7 +95,7 @@ impl KeyStatus {
         })
     }
     
-    pub fn set_429_cooldown(&mut self) {
-        self.cooldown_until = Some(chrono::Utc::now().timestamp() + 3600); // 1小时后
+    pub fn set_429_cooldown(&mut self, cooldown_seconds: u64) {
+        self.cooldown_until = Some(chrono::Utc::now().timestamp() + cooldown_seconds as i64);
     }
 }

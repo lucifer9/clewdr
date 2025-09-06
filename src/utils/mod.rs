@@ -136,8 +136,7 @@ fn extract_top_level_tags(content: &str) -> Result<Vec<String>, String> {
                         // Check if this might be a top-level tag mismatch
                         if depth == 1 {
                             return Err(format!(
-                                "Top-level tag mismatch: expected '</{}>' but found '</{}>'" ,
-                                expected_tag, tag_name
+                                "Top-level tag mismatch: expected '</{expected_tag}>' but found '</{tag_name}>'"
                             ));
                         } else {
                             // This is closing a nested tag
@@ -199,7 +198,7 @@ pub fn validate_required_tags(content: &str, required_tags: &str) -> Result<(), 
     let top_level_tags = match extract_top_level_tags(content) {
         Ok(tags) => tags,
         Err(error) => {
-            let error_msg = format!("Parse error: {}", error);
+            let error_msg = format!("Parse error: {error}");
             info!("[TAG_VALIDATION] {}", error_msg);
             return Err(error_msg);
         }
@@ -208,7 +207,7 @@ pub fn validate_required_tags(content: &str, required_tags: &str) -> Result<(), 
     // Check if all required tags are present at top level
     for required_tag in &required_list {
         if !top_level_tags.contains(&required_tag.to_string()) {
-            let error_msg = format!("Required tag '{}' not found at top level", required_tag);
+            let error_msg = format!("Required tag '{required_tag}' not found at top level");
             info!("[TAG_VALIDATION] {}", error_msg);
             return Err(error_msg);
         }

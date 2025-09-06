@@ -26,6 +26,48 @@ use crate::{
     utils::{forward_response, validate_required_tags},
 };
 
+/// 从Gemini 429错误响应中提取retryDelay
+/// 
+/// 解析错误详情中的RetryInfo，提取retryDelay并转换为秒数
+fn extract_retry_delay(error_body: &serde_json::Value) -> Option<u64> {
+    // 查找 RetryInfo 类型的详情
+    let details = error_body
+        .get("error")?
+        .get("details")?
+        .as_array()?;
+    
+    for detail in details {
+        if let Some(type_field) = detail.get("@type") {
+            if type_field.as_str() == Some("type.googleapis.com/google.rpc.RetryInfo") {
+                if let Some(retry_delay_str) = detail.get("retryDelay").and_then(|v| v.as_str()) {
+                    // 解析类似 "3s", "300s", "1h" 这样的时间格式
+                    return parse_duration_string(retry_delay_str);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 解析时间字符串，返回秒数
+fn parse_duration_string(duration_str: &str) -> Option<u64> {
+    let duration_str = duration_str.trim();
+    
+    if let Some(stripped) = duration_str.strip_suffix('s') {
+        // 处理秒，如 "3s", "300s"
+        stripped.parse().ok()
+    } else if let Some(stripped) = duration_str.strip_suffix('m') {
+        // 处理分钟，如 "5m"
+        stripped.parse::<u64>().ok().map(|m| m * 60)
+    } else if let Some(stripped) = duration_str.strip_suffix('h') {
+        // 处理小时，如 "1h"
+        stripped.parse::<u64>().ok().map(|h| h * 3600)
+    } else {
+        // 尝试直接解析为秒数
+        duration_str.parse().ok()
+    }
+}
+
 #[derive(Clone, Display, PartialEq, Eq, Debug)]
 pub enum GeminiApiFormat {
     Gemini,
@@ -119,19 +161,27 @@ impl GeminiState {
         Ok(())
     }
 
-    pub async fn report_429(&self) -> Result<(), ClewdrError> {
+    pub async fn report_429(&self, error_body: &serde_json::Value) -> Result<(), ClewdrError> {
         if let Some(mut key) = self.key.to_owned() {
+            let old_cooldown = key.cooldown_until;
+            
+            // 尝试从错误详情中提取 retryDelay，失败则使用默认3600s
+            let cooldown_seconds = extract_retry_delay(error_body).unwrap_or(3600);
+            
             info!(
                 key = %key.key.ellipse(),
+                retry_delay_seconds = cooldown_seconds,
                 "Setting 429 cooldown for key"
             );
-            let old_cooldown = key.cooldown_until;
-            key.set_429_cooldown();
+            
+            key.set_429_cooldown(cooldown_seconds);
             info!(
                 ?old_cooldown,
                 ?key.cooldown_until,
+                cooldown_seconds,
                 "Cooldown updated"
             );
+            
             match self.key_handle.return_key(key).await {
                 Ok(_) => info!("[KEY_MGMT] Key returned to pool successfully after 429"),
                 Err(e) => {
@@ -389,8 +439,13 @@ impl GeminiState {
                                     });
                                 }
                                 429 => {
+                                    let error_body = if let ClewdrError::GeminiHttpError { inner, .. } = &e {
+                                        inner.clone()
+                                    } else {
+                                        serde_json::Value::Null
+                                    };
                                     spawn(async move {
-                                        error_state.report_429().await.unwrap_or_else(|e| {
+                                        error_state.report_429(&error_body).await.unwrap_or_else(|e| {
                                             error!("Failed to report 429: {}", e);
                                         });
                                     });
@@ -442,7 +497,7 @@ impl GeminiState {
         let config = CLEWDR_CONFIG.load();
         if config.save_response_before_tag_check {
             let timestamp = Local::now().format("%Y%m%d%H%M%S%3f");
-            let filename = format!("response-{}.txt", timestamp);
+            let filename = format!("response-{timestamp}.txt");
             
             // Try to parse response to extract content
             match self.api_format {
@@ -651,5 +706,177 @@ impl GeminiState {
         Ok(Response::builder()
             .header(CONTENT_TYPE, "application/json")
             .body(bytes.into())?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_extract_retry_delay_with_seconds() {
+        let error_body = json!({
+            "error": {
+                "code": 429,
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "3s"
+                    }
+                ]
+            }
+        });
+
+        let result = extract_retry_delay(&error_body);
+        assert_eq!(result, Some(3));
+    }
+
+    #[test]
+    fn test_extract_retry_delay_with_minutes() {
+        let error_body = json!({
+            "error": {
+                "code": 429,
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "5m"
+                    }
+                ]
+            }
+        });
+
+        let result = extract_retry_delay(&error_body);
+        assert_eq!(result, Some(300)); // 5 * 60
+    }
+
+    #[test]
+    fn test_extract_retry_delay_with_hours() {
+        let error_body = json!({
+            "error": {
+                "code": 429,
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "1h"
+                    }
+                ]
+            }
+        });
+
+        let result = extract_retry_delay(&error_body);
+        assert_eq!(result, Some(3600)); // 1 * 3600
+    }
+
+    #[test]
+    fn test_extract_retry_delay_no_retry_info() {
+        let error_body = json!({
+            "error": {
+                "code": 429,
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": []
+                    }
+                ]
+            }
+        });
+
+        let result = extract_retry_delay(&error_body);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_retry_delay_with_real_example() {
+        // 使用用户提供的真实例子 - 包含RetryInfo
+        let error_body = json!({
+            "error": {
+                "code": 429,
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            {
+                                "quotaDimensions": {
+                                    "location": "global",
+                                    "model": "gemini-2.5-pro"
+                                },
+                                "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                                "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+                                "quotaValue": "50"
+                            }
+                        ]
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.Help",
+                        "links": [
+                            {
+                                "description": "Learn more about Gemini API quotas",
+                                "url": "https://ai.google.dev/gemini-api/docs/rate-limits"
+                            }
+                        ]
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "3s"
+                    }
+                ],
+                "message": "You exceeded your current quota, please check your plan and billing details.",
+                "status": "RESOURCE_EXHAUSTED"
+            }
+        });
+
+        let result = extract_retry_delay(&error_body);
+        assert_eq!(result, Some(3));
+    }
+
+    #[test]
+    fn test_extract_retry_delay_without_retry_info_real_example() {
+        // 使用用户提供的真实例子 - 不包含RetryInfo
+        let error_body = json!({
+            "error": {
+                "code": 429,
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "domain": "googleapis.com",
+                        "metadata": {
+                            "consumer": "projects/996656932924",
+                            "quota_limit": "GenerateContentRequestsPerMinutePerProjectPerRegion",
+                            "quota_limit_value": "0",
+                            "quota_location": "us-south1",
+                            "quota_metric": "generativelanguage.googleapis.com/generate_content_requests",
+                            "quota_unit": "1/min/{project}/{region}",
+                            "service": "generativelanguage.googleapis.com"
+                        },
+                        "reason": "RATE_LIMIT_EXCEEDED"
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.Help",
+                        "links": [
+                            {
+                                "description": "Request a higher quota limit.",
+                                "url": "https://cloud.google.com/docs/quotas/help/request_increase"
+                            }
+                        ]
+                    }
+                ],
+                "message": "Quota exceeded for quota metric 'Generate Content API requests per minute'",
+                "status": "RESOURCE_EXHAUSTED"
+            }
+        });
+
+        let result = extract_retry_delay(&error_body);
+        assert_eq!(result, None); // 应该返回None，然后在report_429中使用默认3600s
+    }
+
+    #[test]
+    fn test_parse_duration_string() {
+        assert_eq!(parse_duration_string("3s"), Some(3));
+        assert_eq!(parse_duration_string("300s"), Some(300));
+        assert_eq!(parse_duration_string("5m"), Some(300));
+        assert_eq!(parse_duration_string("1h"), Some(3600));
+        assert_eq!(parse_duration_string("42"), Some(42));
+        assert_eq!(parse_duration_string("invalid"), None);
     }
 }
