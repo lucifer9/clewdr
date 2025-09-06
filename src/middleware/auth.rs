@@ -55,7 +55,10 @@ where
 ///
 /// # Example
 ///
-/// ```
+/// ```no_run
+/// use axum::response::IntoResponse;
+/// use clewdr::middleware::RequireAdminAuth;
+/// 
 /// async fn admin_only_handler(
 ///     _: RequireAdminAuth,
 ///     // other extractors...
@@ -92,9 +95,12 @@ where
 ///
 /// # Example
 ///
-/// ```
+/// ```no_run
+/// use axum::response::IntoResponse;
+/// use clewdr::middleware::RequireBearerAuth;
+/// 
 /// async fn openai_handler(
-///     _: RequireOaiAuth,
+///     _: RequireBearerAuth,
 ///     // other extractors...
 /// ) -> impl IntoResponse {
 ///     // This handler only executes if OpenAI authentication succeeds
