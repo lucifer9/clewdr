@@ -540,24 +540,59 @@ impl GeminiState {
                     let config = CLEWDR_CONFIG.load();
                     if !config.required_tags.trim().is_empty() {
                         // Use JSON parsing to extract text content safely
-                        if let Ok(json_value) = serde_json::to_value(&res)
-                            && let Some(candidates) = json_value["candidates"].as_array()
-                            && let Some(first_candidate) = candidates.first()
-                            && let Some(content) = first_candidate["content"].as_object()
-                            && let Some(parts) = content.get("parts").and_then(|v| v.as_array())
-                        {
-                            for part in parts {
-                                // Handle Part enum's JSON structure correctly
-                                // Part::Text serializes to {"text": "..."} so we need to access nested text field
-                                if let Some(text_obj) = part.as_object()
-                                    && let Some(text) = text_obj.get("text").and_then(|t| t.as_str())
-                                    && let Err(error) = validate_required_tags(text, &config.required_tags) {
-                                        info!(
-                                            "[TAG_VALIDATION] Content validation failed: {} - will retry",
-                                            error
-                                        );
-                                        return Err(ClewdrError::EmptyChoices);
-                                    }
+                        let json_value = match serde_json::to_value(&res) {
+                            Ok(val) => val,
+                            Err(e) => {
+                                info!("[TAG_VALIDATION] Failed to serialize response to JSON: {} - will retry", e);
+                                return Err(ClewdrError::EmptyChoices);
+                            }
+                        };
+                        
+                        let candidates = match json_value["candidates"].as_array() {
+                            Some(arr) => arr,
+                            None => {
+                                info!("[TAG_VALIDATION] No candidates array found in response - will retry");
+                                return Err(ClewdrError::EmptyChoices);
+                            }
+                        };
+                        
+                        let first_candidate = match candidates.first() {
+                            Some(candidate) => candidate,
+                            None => {
+                                info!("[TAG_VALIDATION] Empty candidates array - will retry");
+                                return Err(ClewdrError::EmptyChoices);
+                            }
+                        };
+                        
+                        let content = match first_candidate["content"].as_object() {
+                            Some(obj) => obj,
+                            None => {
+                                info!("[TAG_VALIDATION] No content object found in candidate - will retry");
+                                return Err(ClewdrError::EmptyChoices);
+                            }
+                        };
+                        
+                        let parts = match content.get("parts").and_then(|v| v.as_array()) {
+                            Some(arr) => arr,
+                            None => {
+                                info!("[TAG_VALIDATION] No parts array found in content - will retry");
+                                return Err(ClewdrError::EmptyChoices);
+                            }
+                        };
+                        
+                        for part in parts {
+                            // Handle Part enum's JSON structure correctly
+                            // Part::Text serializes to {"text": "..."} so we need to access nested text field
+                            if let Some(text_obj) = part.as_object()
+                                && let Some(text) = text_obj.get("text").and_then(|t| t.as_str())
+                            {
+                                if let Err(error) = validate_required_tags(text, &config.required_tags) {
+                                    info!(
+                                        "[TAG_VALIDATION] Content validation failed: {} - will retry",
+                                        error
+                                    );
+                                    return Err(ClewdrError::EmptyChoices);
+                                }
                             }
                         }
                     }
@@ -589,13 +624,28 @@ impl GeminiState {
 
                 // Check tag validation for non-streaming responses
                 let config = CLEWDR_CONFIG.load();
-                if !config.required_tags.trim().is_empty()
-                    && let Some(message_content) = res["choices"].get(0)
-                        .and_then(|c| c["message"]["content"].as_str())
-                    && let Err(error) = validate_required_tags(message_content, &config.required_tags) {
+                if !config.required_tags.trim().is_empty() {
+                    let first_choice = match res["choices"].get(0) {
+                        Some(choice) => choice,
+                        None => {
+                            info!("[TAG_VALIDATION] No first choice found in OpenAI response - will retry");
+                            return Err(ClewdrError::EmptyChoices);
+                        }
+                    };
+                    
+                    let message_content = match first_choice["message"]["content"].as_str() {
+                        Some(content) => content,
+                        None => {
+                            info!("[TAG_VALIDATION] No message content found in OpenAI response - will retry");
+                            return Err(ClewdrError::EmptyChoices);
+                        }
+                    };
+                    
+                    if let Err(error) = validate_required_tags(message_content, &config.required_tags) {
                         info!("[TAG_VALIDATION] Content validation failed: {} - will retry", error);
                         return Err(ClewdrError::EmptyChoices);
                     }
+                }
             }
         }
         Ok(Response::builder()
